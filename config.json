@@ -4,15 +4,15 @@
         "title": ""
     },
     "boardgamegeek": {
-        "user_name": "YOUR_BGG_USERNAME",
+        "user_name": "cardila",
         "extra_params": {
             "own": 1
         }
     },
     "algolia": {
-        "app_id": "YOUR_APP_ID",
-        "api_key_search_only": "YOUR_PUBLIC_API_KEY",
-        "index_name": "YOUR_INDEX_NAME",
+        "app_id": "HFR8B2ZUGC",
+        "api_key_search_only": "da1ed13e01a8b84632e3622d9f06f8f9",
+        "index_name": "cardila-bgg",
         "hits_per_page": 24
     }
 }
