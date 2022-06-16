@@ -1,7 +1,7 @@
 {
     "project": {
         "name": "mybgg",
-        "title": ""
+        "title": "cardila's boardgames"
     },
     "boardgamegeek": {
         "user_name": "cardila",
@@ -13,6 +13,7 @@
         "app_id": "HFR8B2ZUGC",
         "api_key_search_only": "da1ed13e01a8b84632e3622d9f06f8f9",
         "index_name": "cardila-bgg",
-        "hits_per_page": 150
+        "hits_per_page": 48,
+        "sort_by": "desc(numrated)"
     }
 }
