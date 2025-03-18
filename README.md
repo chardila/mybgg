@@ -1,3 +1,4 @@
+[![Update Algolia index with BGG data](https://github.com/chardila/mybgg/actions/workflows/index.yml/badge.svg)](https://github.com/chardila/mybgg/actions/workflows/index.yml)
 # MyBGG - Search and filter your boardgame collection
 
 _This project is meant to be forked. The original project is available here: https://github.com/EmilStenstrom/mybgg_
