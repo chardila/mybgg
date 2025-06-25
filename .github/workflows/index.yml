@@ -1,4 +1,4 @@
-name: Update Algolia index with BGG data
+name: Update index with BGG data
 
 on:
   schedule:
