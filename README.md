@@ -1,6 +1,6 @@
 # MyBGG - View and filter your boardgame collection
 
-_This project is meant to be forked. The original project is available here: https://github.com/EmilStenstrom/mybgg_
+_This project is not meant to be forked. The original project is available here: https://github.com/EmilStenstrom/mybgg_
 
 Create a beautiful, searchable website for your BoardGameGeek collection! This project downloads your games from BoardGameGeek, creates a database, and automatically hosts it as a website using GitHub Pages.
 
