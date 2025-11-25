@@ -1,5 +1,5 @@
 """
-HTTP client functionality for MyBGG project.
+HTTP client functionality for GameCache project.
 Provides simple HTTP functionality with caching capabilities.
 """
 
@@ -24,7 +24,7 @@ def make_http_request(url, params=None, timeout=30, headers=None):
         # Create request with proper headers
         request = urllib.request.Request(url)
         request.add_header('Accept-Encoding', 'gzip, deflate')
-        request.add_header('User-Agent', 'MyBGG/1.0')
+        request.add_header('User-Agent', 'GameCache/1.0')
 
         # Add any additional headers
         if headers:
@@ -91,8 +91,12 @@ class HttpResponse:
 
 class HttpSession:
     """Simple session-like class that mimics requests.Session interface"""
+    
+    def __init__(self, headers=None):
+        """Initialize session with optional default headers"""
+        self.headers = headers or {}
 
-    def get(self, url, params=None, timeout=30):
+    def get(self, url, params=None, timeout=30, headers=None):
         """GET request that mimics requests.Session.get()"""
         # Build full URL with parameters
         if params:
@@ -101,8 +105,13 @@ class HttpSession:
         else:
             full_url = url
 
+        # Merge session headers with request-specific headers
+        merged_headers = self.headers.copy()
+        if headers:
+            merged_headers.update(headers)
+
         try:
-            response_data = make_http_request(full_url, timeout=timeout)
+            response_data = make_http_request(full_url, timeout=timeout, headers=merged_headers if merged_headers else None)
             return HttpResponse(response_data, {}, 200, from_cache=False, url=full_url)
         except Exception as e:
             # Re-raise with status code info if possible
@@ -112,13 +121,14 @@ class HttpSession:
 class CachedHttpClient:
     """HTTP client with SQLite-based caching"""
 
-    def __init__(self, cache_name="http_cache", expire_after=3600):
+    def __init__(self, cache_name="http_cache", expire_after=3600, headers=None):
         """
         Initialize cache with SQLite backend
 
         Args:
             cache_name: Name/path of the cache database
             expire_after: Cache TTL in seconds (default 1 hour)
+            headers: Default headers to include in all requests (dict)
         """
         # Only add .sqlite extension if not already present
         if cache_name.endswith('.sqlite'):
@@ -126,6 +136,7 @@ class CachedHttpClient:
         else:
             self.cache_path = f"{cache_name}.sqlite"
         self.expire_after = expire_after
+        self.headers = headers or {}
         self._init_cache()
 
     def _init_cache(self):
@@ -192,16 +203,19 @@ class CachedHttpClient:
 
         # Cache miss or expired - make actual request
         try:
-            response_data = make_http_request(full_url, timeout=timeout)
+            # Use session headers for the request
+            request_headers = dict(self.headers) if self.headers else {}
+
+            response_data = make_http_request(full_url, timeout=timeout, headers=request_headers)
             status_code = 200  # make_http_request only returns data on success
-            headers = {}  # Simple implementation doesn't capture headers
+            response_headers = {}  # Simple implementation doesn't capture response headers
 
             # Store in cache
             cursor.execute("""
                 INSERT OR REPLACE INTO http_cache
                 (url_hash, url, response_data, headers, status_code, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (url_hash, full_url, response_data, json.dumps(headers), status_code, time_module.time()))
+            """, (url_hash, full_url, response_data, json.dumps(response_headers), status_code, time_module.time()))
             conn.commit()
 
         except Exception as e:
@@ -210,22 +224,27 @@ class CachedHttpClient:
             raise Exception(f"HTTP request failed: {e}")
 
         conn.close()
-        return HttpResponse(response_data, headers, status_code, from_cache=False, url=full_url)
+        return HttpResponse(response_data, response_headers, status_code, from_cache=False, url=full_url)
 
-def make_json_request(url, method='GET', data=None, headers=None, timeout=30):
-    """Make HTTP request and return JSON response or None for 404s"""
+def make_json_request(url, method='GET', data=None, headers=None, timeout=30,
+                      _redirects=0, _max_redirects=5):
+    """Make HTTP request and return JSON response or None for 404s.
+
+    Adds manual redirect handling for non-GET methods (DELETE/POST/etc.).
+    """
     if headers is None:
         headers = {}
 
     # Set default headers for JSON requests
-    headers.setdefault('User-Agent', 'MyBGG/1.0')
+    headers.setdefault('User-Agent', 'GameCache/1.0')
     headers.setdefault('Accept', 'application/json')
 
+    method = method.upper()
     try:
-        if method.upper() == 'GET':
+        if method == 'GET' and data is None:
             response_data = make_http_request(url, timeout=timeout, headers=headers)
         else:
-            # For POST requests
+            # For POST/other requests
             if isinstance(data, dict):
                 if headers.get('Content-Type') == 'application/x-www-form-urlencoded':
                     # Form data
@@ -237,7 +256,7 @@ def make_json_request(url, method='GET', data=None, headers=None, timeout=30):
 
             # Create request with proper headers
             request = urllib.request.Request(url, data=data, headers=headers)
-            request.get_method = lambda: method.upper()
+            request.get_method = lambda: method
 
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 response_data = response.read()
@@ -254,17 +273,40 @@ def make_json_request(url, method='GET', data=None, headers=None, timeout=30):
         return {}
 
     except urllib.error.HTTPError as e:
+        # Manual redirect handling (urllib auto-handles GET/HEAD; we add method-preserving logic)
+        if e.code in (301, 302, 303, 307, 308):
+            if _redirects >= _max_redirects:
+                raise Exception(f"HTTP redirect loop after {_max_redirects} for {url}")
+            loc = e.headers.get('Location')
+            if not loc:
+                raise Exception(f"HTTP {e.code}: Redirect with no Location for {url}")
+            new_url = urllib.parse.urljoin(url, loc)
+            # Per RFC 7231: 303 forces GET
+            if e.code == 303:
+                return make_json_request(new_url, 'GET', None, headers, timeout,
+                                         _redirects + 1, _max_redirects)
+            return make_json_request(new_url, method, data, headers, timeout,
+                                     _redirects + 1, _max_redirects)
+
+        body = ''
+        try:
+            raw = e.read()
+            if raw:
+                body = raw.decode('utf-8', errors='replace')
+        except Exception:
+            pass
         if e.code == 404:
             # For 404s, return None to indicate not found
             return None
-        elif e.code == 200:
-            # Sometimes 200 is returned even on HTTPError
-            content = e.read().decode('utf-8')
-            if content:
-                return json.loads(content)
+        if e.code == 200:
+            if body.strip():
+                try:
+                    return json.loads(body)
+                except Exception:
+                    return {}
             return {}
-        else:
-            raise Exception(f"HTTP {e.code}: {e.reason}")
+        snippet = f" Body: {body[:300]}" if body else ''
+        raise Exception(f"HTTP {e.code}: {e.reason}.{snippet}")
     except urllib.error.URLError as e:
         raise Exception(f"HTTP request failed: {e}")
 

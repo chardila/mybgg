@@ -17,7 +17,7 @@ from pathlib import Path
 script_dir = Path(__file__).parent
 sys.path.insert(0, str(script_dir))
 
-from mybgg.github_integration import _make_http_request, _make_http_post_json  # noqa: E402
+from gamecache.github_integration import _make_http_request, _make_http_post_json  # noqa: E402
 
 
 def encrypt_secret(public_key: str, secret_value: str) -> str:
@@ -151,18 +151,41 @@ def get_repo_from_config() -> str | None:
                     repo = parts[1].strip()
                     # Remove quotes if present
                     repo = repo.strip('"\'')
-                    if repo and repo != 'YOUR_GITHUB_USERNAME/mybgg':
+                    if repo and repo != 'YOUR_GITHUB_USERNAME/gamecache':
                         return repo
         
         return None
     except Exception:
         return None
 
+
+def get_bgg_token_from_env() -> str | None:
+    """Get the BGG token from .env file."""
+    env_file = Path(__file__).parent.parent / '.env'
+
+    if not env_file.exists():
+        return None
+
+    try:
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('GAMECACHE_BGG_TOKEN='):
+                    token = line.split('=', 1)[1].strip()
+                    if token:
+                        return token
+        return None
+    except Exception:
+        return None
+
 def main():
-    token_file = Path.home() / '.mybgg' / 'token.json'
+    # Prefer new path, fall back to legacy
+    new_token_file = Path.home() / '.gamecache' / 'token.json'
+    legacy_token_file = Path.home() / '.mybgg' / 'token.json'
+    token_file = new_token_file if new_token_file.exists() else legacy_token_file
 
     if not token_file.exists():
-        print("❌ No token file found at ~/.mybgg/token.json")
+        print("❌ No token file found at ~/.gamecache/token.json or ~/.mybgg/token.json")
         print("Please run the download script first to authenticate with GitHub:")
         print("  python scripts/download_and_index.py --debug")
         print("\nThis will authenticate you with GitHub and save the token locally.")
@@ -179,44 +202,80 @@ def main():
 
         token = token_data['access_token']
         print("✅ Found GitHub token!")
+        # One-time migration: if we read from legacy path, ensure new path has the token too
+        new_token_path = Path.home() / '.gamecache' / 'token.json'
+        if token_file != new_token_path:
+            try:
+                new_token_path.parent.mkdir(exist_ok=True)
+                with open(new_token_path, 'w') as nf:
+                    json.dump(token_data, nf, indent=2)
+                try:
+                    os.chmod(new_token_path, 0o600)
+                except Exception:
+                    pass
+                print(f"🔁 Migrated token to {new_token_path}")
+            except Exception as e:
+                print(f"⚠️  Could not migrate token to {new_token_path}: {e}")
         
         # Try to get repository from config
         repo = get_repo_from_config()
         
         if repo:
             print(f"✅ Found repository: {repo}")
-            print(f"\n🔄 Creating GitHub secret 'MYBGG_GITHUB_TOKEN' in {repo}...")
+            print(f"\n🔄 Creating GitHub secrets in {repo}...")
 
             try:
+                # Create GitHub token secrets
+                create_github_secret(repo, token, 'GAMECACHE_GITHUB_TOKEN', token)
                 create_github_secret(repo, token, 'MYBGG_GITHUB_TOKEN', token)
-                print("✅ Successfully created GitHub secret!")
+                print("✅ Successfully created GitHub token secrets!")
+
+                # Create BGG token secret if available
+                bgg_token = get_bgg_token_from_env()
+                if bgg_token:
+                    print("\n🔄 Creating BGG token secret...")
+                    create_github_secret(repo, token, 'GAMECACHE_BGG_TOKEN', bgg_token)
+                    print("✅ Successfully created BGG token secret!")
+                else:
+                    print("\n⚠️  No BGG token found in .env file")
+                    print("   Run 'python scripts/setup_bgg_token.py' to generate one,")
+                    print("   then run this script again to upload it to GitHub.")
+
                 print("\n🎉 Hourly updates are now enabled!")
                 print("Your board game collection will be automatically updated every hour.")
                 print("You can test it by going to the Actions tab in your repository.")
             except Exception as e:
                 print(f"❌ Failed to create GitHub secret: {e}")
                 print("\nFalling back to manual setup...")
-                show_manual_instructions(token)
+                show_manual_instructions(token, get_bgg_token_from_env())
         else:
             print("⚠️  Could not determine repository from config.ini")
-            show_manual_instructions(token)
+            show_manual_instructions(token, get_bgg_token_from_env())
 
     except Exception as e:
         print(f"❌ Error reading token file: {e}")
         sys.exit(1)
 
 
-def show_manual_instructions(token: str):
+def show_manual_instructions(token: str, bgg_token: str | None = None):
     """Show manual setup instructions."""
-    print(f"\nToken: {token}")
+    print(f"\nGitHub Token: {token}")
+    if bgg_token:
+        print(f"BGG Token: {bgg_token}")
+    else:
+        print("BGG Token: Not found (run 'python scripts/setup_bgg_token.py' to generate)")
+
     print("\nManual setup steps:")
-    print("1. Copy the token above")
+    print("1. Copy the tokens above")
     print("2. Go to your GitHub repository settings")
     print("3. Navigate to Settings > Secrets and variables > Actions")
     print("4. Click 'New repository secret'")
-    print("5. Name: MYBGG_GITHUB_TOKEN")
-    print("6. Value: paste the token")
-    print("7. Click 'Add secret'")
+    print("5. Create these secrets:")
+    print("   - GAMECACHE_GITHUB_TOKEN = <paste GitHub token>")
+    print("   - MYBGG_GITHUB_TOKEN = <paste GitHub token>")
+    if bgg_token:
+        print("   - GAMECACHE_BGG_TOKEN = <paste BGG token>")
+    print("6. Click 'Add secret' for each one")
 
 
 if __name__ == "__main__":
