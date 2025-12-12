@@ -589,7 +589,109 @@ body {
     color: #888;
 }
 
-.highlight {
+    .highlight {
     background: yellow;
     color: #333;
+}
+
+/* Mobile Filter Toggle */
+.mobile-filter-toggle {
+    display: none; /* Hidden on desktop */
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #5f6368;
+    padding: 8px;
+    border-radius: 50%;
+    margin-left: auto;
+}
+
+.mobile-filter-toggle:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* Responsive Styles */
+@media screen and (max-width: 768px) {
+    .wrapper {
+        padding: 0;
+        flex-direction: column;
+    }
+
+    .facets {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: 280px;
+        background: white;
+        z-index: 1000;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+        flex-direction: column;
+        overflow-y: auto;
+        padding: 1rem;
+        box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+        gap: 0.5rem;
+    }
+
+    .facets.open {
+        transform: translateX(0);
+    }
+
+    .facets-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0,0,0,0.5);
+        z-index: 999;
+        display: none;
+    }
+
+    .facets-overlay.visible {
+        display: block;
+    }
+
+    .results {
+        width: 100%;
+        padding: 0.5rem;
+        box-sizing: border-box;
+    }
+    
+    .search {
+        padding: 0.5em;
+        gap: 0.5em;
+    }
+    
+    .logo {
+        height: 32px;
+        width: 32px;
+        margin-right: 0.5em;
+    }
+    
+    .search-box {
+        margin-right: 0.5em;
+        max-width: none;
+    }
+    
+    .sort-by {
+        display: none; /* Hide sort on mobile to save space, or move into sidebar */
+    }
+
+    .mobile-filter-toggle {
+        display: block;
+    }
+    
+    .game-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
+    }
+
+    .game-details {
+        width: 90vw; /* Wider popup on mobile */
+        left: 5vw;
+        max-height: 80vh; /* Prevent overflowing screen height */
+        overflow-y: auto;
+    }
 }

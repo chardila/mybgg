@@ -63,7 +63,10 @@ function createTagChipsContainer(chips) {
 // Core application functions
 function loadINI(path, callback) {
   fetch(path)
-    .then(response => response.text())
+    .then(response => {
+      if (!response.ok) throw new Error(`Config load failed: ${response.status}`);
+      return response.text();
+    })
     .then(text => {
       const config = {};
       const lines = text.split('\n');
@@ -81,7 +84,7 @@ function loadINI(path, callback) {
 
           // Remove quotes if present
           if ((value.startsWith('"') && value.endsWith('"')) ||
-              (value.startsWith("'") && value.endsWith("'"))) {
+            (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
           }
 
@@ -102,7 +105,10 @@ function loadINI(path, callback) {
 
       callback(settings);
     })
-    .catch(error => console.error('Error loading config:', error));
+    .catch(error => {
+      console.error('Error loading config:', error);
+      showError(`Failed to load configuration: ${error.message}`);
+    });
 }
 
 async function initializeDatabase(settings) {
@@ -111,7 +117,7 @@ async function initializeDatabase(settings) {
       locateFile: file => `https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/${file}`
     });
 
-    const isDev = /^(localhost|127\\.0\\.0\\.1)$/.test(location.hostname);
+    const isDev = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(location.hostname);
     // Use existing CORS proxy host
     const dbUrl = isDev ? './gamecache.sqlite.gz' :
       `https://cors-proxy.mybgg.workers.dev/${settings.github.repo}`;
@@ -131,6 +137,11 @@ async function initializeDatabase(settings) {
 
     const arrayBuffer = await response.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
+
+    // Ensure fflate is available
+    if (typeof fflate === 'undefined') {
+      throw new Error('fflate library not loaded');
+    }
 
     const dbData = fflate.gunzipSync(bytes);
 
@@ -252,7 +263,32 @@ function initializeUI() {
       }
     }
   });
+
+  initializeMobileFilters();
 }
+
+function initializeMobileFilters() {
+  const toggleBtn = document.getElementById('mobile-filter-toggle');
+  const facets = document.querySelector('.facets');
+
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'facets-overlay';
+  document.body.appendChild(overlay);
+
+  function toggleMenu() {
+    facets.classList.toggle('open');
+    overlay.classList.toggle('visible');
+    document.body.style.overflow = facets.classList.contains('open') ? 'hidden' : '';
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', toggleMenu);
+  }
+
+  overlay.addEventListener('click', toggleMenu);
+}
+
 
 function handleMoreButtonClick(button) {
   const teaserText = button.closest('.teaser-text');
@@ -456,8 +492,8 @@ function setupPlayersFilter() {
 
       if (typeCount > 0) {
         const typeLabel = recType === 'best' ? 'Best with' :
-                         recType === 'recommended' ? 'Recommended with' :
-                         'Expansions allow';
+          recType === 'recommended' ? 'Recommended with' :
+            'Expansions allow';
 
         playerItems.push({
           label: `${typeLabel} ${p} player${p === 1 ? '' : 's'}`,
