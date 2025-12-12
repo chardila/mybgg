@@ -124,8 +124,7 @@ class BGGClient:
                     raise BGGException(
                         "BGG API authentication failed (401 Unauthorized). "
                         f"Token present but rejected by BGG. "
-                        f"Try regenerating your token: python scripts/setup_bgg_token.py\n"
-                        f"Token being used: {self.token[:8]}..."
+                        f"Try regenerating your token: python scripts/setup_bgg_token.py"
                     )
 
             # Check for Too Many Requests (429)

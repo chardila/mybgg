@@ -6,3 +6,6 @@ __pycache__
 
 # Private configuration (keep tokens secret!)
 .env
+
+# Project-specific AI guidance file
+CLAUDE.md
