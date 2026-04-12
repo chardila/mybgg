@@ -1,0 +1,22 @@
+name: Keepalive
+
+on:
+  schedule:
+    - cron: '0 0 1 1,3,5,7,9,11 *'  # Jan, Mar, May, Jul, Sep, Nov - every ~2 months
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Empty commit to keep repo active
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive"
+          git push origin HEAD:${{ github.ref_name }}
