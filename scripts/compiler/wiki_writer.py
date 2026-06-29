@@ -39,7 +39,7 @@ def _build_frontmatter(
         f"status: {status}",
         f"source: {source}",
     ]
-    if pdf_url:
+    if pdf_url is not None:
         lines.append(f"pdf_url: {pdf_url}")
     lines += [
         f"players: \"{game_data['players']}\"",
