@@ -9,3 +9,7 @@ __pycache__
 
 # Project-specific AI guidance file
 CLAUDE.md
+
+worker/.dev.vars
+worker/.wrangler/
+worker/node_modules/
