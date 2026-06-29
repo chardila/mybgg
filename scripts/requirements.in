@@ -2,3 +2,6 @@ declxml
 pillow
 cryptography
 pynacl
+openai
+pdfplumber
+pytest
