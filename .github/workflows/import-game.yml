@@ -1,0 +1,68 @@
+name: Import game to wiki
+
+on:
+  workflow_dispatch:
+    inputs:
+      bgg_id:
+        description: 'BGG Game ID (number in the BGG URL, e.g. 237182 for Root)'
+        required: true
+        type: string
+      pdf_url:
+        description: 'Direct URL to the rulebook PDF (leave empty to use LLM knowledge)'
+        required: false
+        type: string
+        default: ''
+      status:
+        description: 'Ownership status'
+        required: true
+        type: choice
+        default: 'owned'
+        options:
+          - owned
+          - wishlist
+          - borrowed
+          - friend
+          - played
+          - archived
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mybgg (code)
+        uses: actions/checkout@v6
+
+      - name: Checkout mybgg-wiki (content)
+        uses: actions/checkout@v6
+        with:
+          repository: chardila/mybgg-wiki
+          path: wiki
+          token: ${{ secrets.WIKI_GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Configure git identity for wiki commits
+        run: |
+          git -C wiki config user.name "GitHub Actions"
+          git -C wiki config user.email "actions@github.com"
+
+      - name: Import game
+        env:
+          GAMECACHE_BGG_TOKEN: ${{ secrets.GAMECACHE_BGG_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          BGG_ID: ${{ inputs.bgg_id }}
+          PDF_URL: ${{ inputs.pdf_url }}
+          STATUS: ${{ inputs.status }}
+        run: |
+          ARGS="--bgg_id $BGG_ID --status $STATUS --wiki_path wiki"
+          if [ -n "$PDF_URL" ]; then
+            ARGS="$ARGS --pdf_url $PDF_URL"
+          fi
+          python scripts/compiler/add_game.py $ARGS
