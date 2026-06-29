@@ -34,13 +34,13 @@ def _build_frontmatter(
     lines = [
         "---",
         f"bgg_id: {game_data['id']}",
-        f"name: {game_data['name']}",
+        f'name: "{game_data["name"]}"',
         f"slug: {game_data['slug']}",
         f"status: {status}",
         f"source: {source}",
     ]
     if pdf_url is not None:
-        lines.append(f"pdf_url: {pdf_url}")
+        lines.append(f'pdf_url: "{pdf_url}"')
     lines += [
         f"players: \"{game_data['players']}\"",
         f"weight: {game_data['weight']}",
@@ -58,6 +58,13 @@ def _build_frontmatter(
 
 def _git_commit_and_push(wiki_path: str, slug: str, name: str) -> None:
     _git(wiki_path, "add", f"games/{slug}/")
+    result = subprocess.run(
+        ["git", "-C", wiki_path, "diff", "--cached", "--quiet"],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        print(f"No changes to commit for {name} (content unchanged)")
+        return
     _git(wiki_path, "commit", "-m", f"feat: add wiki for {name}")
     _git(wiki_path, "push")
 

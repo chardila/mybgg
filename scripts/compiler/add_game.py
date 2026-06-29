@@ -38,15 +38,18 @@ def main(bgg_id: int, pdf_url: str | None, status: str, wiki_path: str) -> None:
     print("Compiling wiki sections (6 LLM calls)...")
     sections, failures = compile_game(game_data, rulebook_text, provider)
 
-    if failures:
-        print(f"Warning: {len(failures)} section(s) failed: {failures}")
+    if not sections:
+        print(f"Error: all sections failed to generate: {failures}")
+        sys.exit(1)
 
     print(f"Writing wiki files to {wiki_path}/games/{game_data['slug']}/...")
     write_game(game_data, sections, wiki_path, status, source, pdf_url)
 
     print(f"Done! Wiki for '{game_data['name']}' committed to {wiki_path}.")
     if failures:
+        print(f"Warning: {len(failures)} section(s) failed: {failures}")
         print(f"Re-run to retry failed sections: {failures}")
+        sys.exit(len(failures))
 
 
 if __name__ == "__main__":

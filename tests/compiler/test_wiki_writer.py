@@ -64,7 +64,7 @@ def test_other_sections_have_no_frontmatter(tmp_path):
 def test_build_frontmatter_includes_pdf_url():
     from datetime import date
     fm = _build_frontmatter(GAME_DATA, "owned", "pdf", "https://example.com/root.pdf")
-    assert "pdf_url: https://example.com/root.pdf" in fm
+    assert 'pdf_url: "https://example.com/root.pdf"' in fm
 
 
 def test_build_frontmatter_omits_pdf_url_when_none():
