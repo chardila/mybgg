@@ -3,6 +3,7 @@ pillow
 cryptography
 pynacl
 requests
+beautifulsoup4
 openai
 pdfplumber
 pytest
