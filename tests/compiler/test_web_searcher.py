@@ -37,13 +37,19 @@ def test_returns_first_valid_pdf_url():
 
 
 def test_skips_url_that_is_not_pdf_content_type():
-    html_url = "https://example.com/page"
+    non_pdf_url = "https://example.com/fakebook.pdf"  # looks like PDF, but isn't
     pdf_url = "https://example.com/rules.pdf"
-    responses = {html_url: _mock_head_not_pdf(html_url), pdf_url: _mock_head_pdf(pdf_url)}
+    def fake_head(url, **kw):
+        resp = MagicMock()
+        if url == non_pdf_url:
+            resp.headers = {"Content-Type": "text/html"}
+        else:
+            resp.headers = {"Content-Type": "application/pdf"}
+        return resp
     with (
         patch("compiler.web_searcher.requests.post",
-              return_value=_mock_tavily_response([html_url, pdf_url])),
-        patch("compiler.web_searcher.requests.head", side_effect=lambda url, **kw: responses[url]),
+              return_value=_mock_tavily_response([non_pdf_url, pdf_url])),
+        patch("compiler.web_searcher.requests.head", side_effect=fake_head),
     ):
         result = search_rulebook_pdf("Root", "fake-key")
     assert result == pdf_url

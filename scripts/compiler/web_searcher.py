@@ -18,14 +18,9 @@ def search_rulebook_pdf(game_name: str, tavily_api_key: str) -> str | None:
 
     for result in resp.json().get("results", []):
         url = result.get("url", "")
-        if _looks_like_pdf_url(url) and _is_pdf_content(url):
+        if _is_pdf_content(url):
             return url
     return None
-
-
-def _looks_like_pdf_url(url: str) -> bool:
-    u = url.lower()
-    return u.endswith(".pdf") or "/pdf" in u or "pdf=" in u
 
 
 def _is_pdf_content(url: str) -> bool:
