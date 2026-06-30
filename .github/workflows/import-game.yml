@@ -30,10 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout mybgg (code)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Checkout mybgg-wiki (content)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: chardila/mybgg-wiki
           path: wiki
@@ -42,7 +42,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.13'
           cache: 'pip'
 
       - name: Install dependencies
