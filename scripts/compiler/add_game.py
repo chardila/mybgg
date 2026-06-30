@@ -20,6 +20,19 @@ def _resolve_edition(game_data: dict, edition_override: str | None) -> str:
     return str(year) if year else "unknown"
 
 
+def find_base_game_in_wiki(wiki_path: str, bgg_id: int) -> dict | None:
+    for index_file in Path(wiki_path).glob("games/*/index.md"):
+        content = index_file.read_text()
+        lines = content.splitlines()
+        if not any(line.strip() == f"bgg_id: {bgg_id}" for line in lines):
+            continue
+        for line in lines:
+            if line.startswith('name: "'):
+                name = line.split('"')[1]
+                return {"slug": index_file.parent.name, "name": name}
+    return None
+
+
 def main(
     bgg_id: int,
     pdf_url: str | None,
@@ -39,6 +52,19 @@ def main(
     game_data["slug"] = f"{game_data['slug']}-{resolved_edition}"
     game_data["edition"] = resolved_edition
     print(f"Found: {game_data['name']} ({game_data['slug']})")
+
+    if game_data.get("is_expansion") and game_data.get("base_game_id"):
+        base = find_base_game_in_wiki(wiki_path, game_data["base_game_id"])
+        if base is None:
+            print(
+                f"Error: base game (bgg_id={game_data['base_game_id']}) not found in wiki. "
+                "Import the base game first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        game_data["base_game_slug"] = base["slug"]
+        game_data["base_game_name"] = base["name"]
+        print(f"Expansion of: {base['name']} ({base['slug']})")
 
     if pdf_url:
         print(f"Downloading PDF from {pdf_url}...")

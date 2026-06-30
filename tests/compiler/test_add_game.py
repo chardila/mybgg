@@ -143,3 +143,95 @@ def test_main_slug_uses_edition_override(tmp_path):
              wiki_path=str(tmp_path), edition="Kickstarter")
 
     assert captured["slug"] == "root-kickstarter"
+
+
+# ── find_base_game_in_wiki unit tests ────────────────────────────────────────
+
+def test_find_base_game_returns_slug_and_name(tmp_path):
+    from compiler.add_game import find_base_game_in_wiki
+    game_dir = tmp_path / "games" / "pandemic-2008"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text(
+        '---\nbgg_id: 30549\nname: "Pandemic"\nslug: pandemic-2008\n---\n\nContent.'
+    )
+    result = find_base_game_in_wiki(str(tmp_path), 30549)
+    assert result == {"slug": "pandemic-2008", "name": "Pandemic"}
+
+
+def test_find_base_game_returns_none_when_not_found(tmp_path):
+    from compiler.add_game import find_base_game_in_wiki
+    game_dir = tmp_path / "games" / "root-2018"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text(
+        '---\nbgg_id: 237182\nname: "Root"\nslug: root-2018\n---\n'
+    )
+    result = find_base_game_in_wiki(str(tmp_path), 30549)
+    assert result is None
+
+
+def test_find_base_game_ignores_partial_id_match(tmp_path):
+    from compiler.add_game import find_base_game_in_wiki
+    game_dir = tmp_path / "games" / "pandemic-2008"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text(
+        '---\nbgg_id: 305490\nname: "Other"\nslug: pandemic-2008\n---\n'
+    )
+    result = find_base_game_in_wiki(str(tmp_path), 30549)
+    assert result is None
+
+
+# ── expansion main() path tests ──────────────────────────────────────────────
+
+EXPANSION_GAME_DATA = {
+    "id": 161936, "name": "Pandemic: In the Lab", "slug": "pandemic-in-the-lab",
+    "description": "Expansion.", "mechanics": ["Cooperative Game"],
+    "categories": ["Expansion"], "players": "2-4",
+    "min_players": 2, "max_players": 4,
+    "weight": "2.5", "rank": "Not Ranked", "playing_time": "45",
+    "yearpublished": 2014,
+    "is_expansion": True, "base_game_id": 30549,
+}
+
+
+def test_main_expansion_exits_when_base_game_not_in_wiki(tmp_path):
+    (tmp_path / "games").mkdir()
+    with (
+        patch("compiler.add_game.fetch_game", return_value=EXPANSION_GAME_DATA.copy()),
+        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
+        patch("compiler.add_game.extract_text", return_value="Rules"),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        with pytest.raises(SystemExit) as exc:
+            main(bgg_id=161936, pdf_url="https://example.com/exp.pdf",
+                 status="owned", wiki_path=str(tmp_path))
+        assert exc.value.code == 1
+
+
+def test_main_expansion_sets_base_game_fields_in_game_data(tmp_path):
+    game_dir = tmp_path / "games" / "pandemic-2008"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text(
+        '---\nbgg_id: 30549\nname: "Pandemic"\nslug: pandemic-2008\n---\n'
+    )
+    captured = {}
+    def capture_compile(game_data, *args, **kwargs):
+        captured.update(game_data)
+        return (FULL_SECTIONS, [])
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=EXPANSION_GAME_DATA.copy()),
+        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
+        patch("compiler.add_game.extract_text", return_value="Rules"),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.compile_game", side_effect=capture_compile),
+        patch("compiler.add_game.write_game"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=161936, pdf_url="https://example.com/exp.pdf",
+             status="owned", wiki_path=str(tmp_path))
+
+    assert captured["base_game_slug"] == "pandemic-2008"
+    assert captured["base_game_name"] == "Pandemic"
