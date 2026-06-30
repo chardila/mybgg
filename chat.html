@@ -336,7 +336,7 @@
             const parsed = JSON.parse(data);
             if (parsed.error) {
               streamDiv.className = 'message error';
-              streamDiv.innerHTML = parsed.error;
+              streamDiv.textContent = parsed.error;
               finished = true;
               break;
             }
@@ -367,6 +367,7 @@
     if (!slug) return;
 
     const name = this.options[this.selectedIndex].textContent;
+    const safeName = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     currentMode = 'deep_dive';
     currentGame = slug;
     currentGameName = name;
@@ -376,8 +377,8 @@
     document.getElementById('btn-reset-discovery').style.display = 'inline';
     document.getElementById('chat-container').innerHTML = '';
 
-    const openingEs = `Listo para responder preguntas sobre ${name}. Tengo acceso a las reglas, setup y guía de enseñanza. ¿Qué necesitas saber?`;
-    const openingEn = `Ready to answer questions about ${name}. I have access to the rules, setup, and teaching guide. What do you need to know?`;
+    const openingEs = `Listo para responder preguntas sobre ${safeName}. Tengo acceso a las reglas, setup y guía de enseñanza. ¿Qué necesitas saber?`;
+    const openingEn = `Ready to answer questions about ${safeName}. I have access to the rules, setup, and teaching guide. What do you need to know?`;
     addMessage('assistant', currentLanguage === 'en' ? openingEn : openingEs);
   });
 

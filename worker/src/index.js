@@ -129,6 +129,9 @@ async function handleChat(request, env) {
     const systemBase = SYSTEM_PROMPTS.discovery[language] ?? SYSTEM_PROMPTS.discovery.es;
     systemContent = `${systemBase}\n\nUser's game catalog (JSON):\n${catalog}`;
   } else if (mode === 'deep_dive' && game) {
+    if (!/^[a-z0-9-]+$/.test(game)) {
+      return sseError(request, 'Invalid game slug.');
+    }
     const [index, rules, teaching, faq, glossary] = await Promise.all([
       env.WIKI.get(`games/${game}/index`),
       env.WIKI.get(`games/${game}/rules`),
@@ -156,9 +159,10 @@ async function handleChat(request, env) {
     return sseError(request, 'Invalid mode. Use "discovery" or "deep_dive" with a game slug.');
   }
 
+  const cappedHistory = history.slice(-20);
   const messages = [
     { role: 'system', content: systemContent },
-    ...history,
+    ...cappedHistory,
     { role: 'user', content: message },
   ];
 
