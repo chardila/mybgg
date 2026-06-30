@@ -7,15 +7,21 @@ SYSTEM = (
     "Write in English. Be concise and precise. Do not include YAML frontmatter."
 )
 
-def _rulebook_block(rulebook_text: str | None) -> str:
+def _rulebook_block(rulebook_text: str | None, game_data: dict) -> str:
     if rulebook_text:
         return f"\nRulebook text (authoritative source):\n---\n{rulebook_text}\n---\n"
-    return "\nNo rulebook provided. Use your knowledge of the game.\n"
+    edition = game_data.get("edition", "unknown")
+    name = game_data["name"]
+    return (
+        f"\nNo rulebook provided. Generate from general knowledge for the "
+        f"**{edition} edition** of \"{name}\". "
+        "If rules or components differ between editions, note the uncertainty explicitly.\n"
+    )
 
 
 def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
     name = game_data["name"]
-    rb = _rulebook_block(rulebook_text)
+    rb = _rulebook_block(rulebook_text, game_data)
     meta = (
         f"- Players: {game_data['players']}\n"
         f"- Playing time: {game_data['playing_time']} min\n"

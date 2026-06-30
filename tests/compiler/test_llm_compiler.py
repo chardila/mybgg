@@ -69,3 +69,21 @@ def test_compile_game_includes_edition_in_prompts():
 
     all_prompts = " ".join(str(call) for call in provider.generate.call_args_list)
     assert "2018" in all_prompts
+
+
+def test_no_rulebook_block_includes_edition_and_game_name():
+    from compiler.llm_compiler import _rulebook_block
+    game_data = {**GAME_DATA, "edition": "kickstarter", "name": "Root"}
+    result = _rulebook_block(None, game_data)
+    assert "kickstarter" in result
+    assert "Root" in result
+    assert "general knowledge" in result
+    assert "uncertainty" in result
+
+
+def test_rulebook_block_with_text_ignores_edition():
+    from compiler.llm_compiler import _rulebook_block
+    game_data = {**GAME_DATA, "edition": "kickstarter"}
+    result = _rulebook_block("Chapter 1: Setup...", game_data)
+    assert "Chapter 1: Setup" in result
+    assert "general knowledge" not in result
