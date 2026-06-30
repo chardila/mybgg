@@ -1,4 +1,3 @@
-// Allow localhost origins for local development; production locks to bgg.cardila.com
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
   const isAllowed =
@@ -8,6 +7,14 @@ function getCorsHeaders(request) {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
+}
+
+async function handleGetGames(request, env) {
+  const catalog = await env.WIKI.get('catalog');
+  return new Response(catalog || '[]', {
+    status: 200,
+    headers: { ...getCorsHeaders(request), 'Content-Type': 'application/json' },
+  });
 }
 
 export default {
@@ -21,6 +28,10 @@ export default {
 
     if (url.pathname === '/api/health' && request.method === 'GET') {
       return new Response('ok', { status: 200, headers: cors });
+    }
+
+    if (url.pathname === '/api/games' && request.method === 'GET') {
+      return handleGetGames(request, env);
     }
 
     return new Response('not found', { status: 404, headers: cors });
