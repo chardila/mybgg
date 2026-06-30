@@ -55,7 +55,7 @@ async function streamDeepSeek(messages, apiKey, request) {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model: 'deepseek-chat', messages, stream: true }),
+    body: JSON.stringify({ model: 'deepseek-v4-flash', messages, stream: true }),
   });
 
   if (!response.ok) {
