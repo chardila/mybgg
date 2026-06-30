@@ -111,6 +111,21 @@ def test_main_slug_includes_edition_from_year(tmp_path):
     assert captured["edition"] == "2018"
 
 
+def test_main_exits_when_pdf_extracts_no_text(tmp_path):
+    with (
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
+        patch("compiler.add_game.extract_text", return_value=""),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
+    ):
+        from compiler.add_game import main
+        with pytest.raises(SystemExit) as exc:
+            main(bgg_id=237182, pdf_url="https://example.com/root.pdf",
+                 status="owned", wiki_path=str(tmp_path))
+        assert exc.value.code == 1
+
+
 def test_main_slug_uses_edition_override(tmp_path):
     captured = {}
     def capture_write(game_data, *args, **kwargs):

@@ -27,7 +27,7 @@ def main(
     wiki_path: str,
     edition: str | None = None,
 ) -> None:
-    bgg_token = os.environ.get("GAMECACHE_BGG_TOKEN") or None
+    bgg_token = os.environ.get("GAMECACHE_BGG_TOKEN")
     deepseek_key = os.environ["DEEPSEEK_API_KEY"]
 
     provider = DeepSeekProvider(api_key=deepseek_key)
@@ -44,12 +44,15 @@ def main(
         print(f"Downloading PDF from {pdf_url}...")
         pdf_bytes = fetch_pdf(pdf_url)
         rulebook_text = extract_text(pdf_bytes)
+        if not rulebook_text:
+            print("Error: PDF extracted no text. Provide a searchable (non-scanned) PDF or use --edition without --pdf_url.", file=sys.stderr)
+            sys.exit(1)
         print(f"Extracted {len(rulebook_text)} characters from PDF.")
         source = "pdf-manual"
         resolved_url: str | None = pdf_url
     else:
         if not edition:
-            print("Error: --edition is required when --pdf_url is not provided.")
+            print("Error: --edition is required when --pdf_url is not provided.", file=sys.stderr)
             sys.exit(1)
         rulebook_text = None
         source = "llm-only"
@@ -84,8 +87,8 @@ if __name__ == "__main__":
 
     main(
         bgg_id=args.bgg_id,
-        pdf_url=args.pdf_url if args.pdf_url else None,
-        edition=args.edition if args.edition else None,
+        pdf_url=args.pdf_url,
+        edition=args.edition,
         status=args.status,
         wiki_path=args.wiki_path,
     )
