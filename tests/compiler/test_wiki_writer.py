@@ -226,3 +226,17 @@ def test_write_game_base_game_does_not_call_update(tmp_path):
         write_game(GAME_DATA_WITH_EDITION, SECTIONS, str(tmp_path), "owned", "pdf-manual")
 
     mock_update.assert_not_called()
+
+
+def test_build_frontmatter_does_not_crash_when_expansion_has_no_inbound_link():
+    game_data = {
+        "id": 161936, "name": "Pandemic: In the Lab",
+        "slug": "pandemic-in-the-lab-2014", "edition": "2014",
+        "yearpublished": 2014, "mechanics": [],
+        "players": "2-4", "weight": "2.5", "rank": "Not Ranked",
+        "is_expansion": True, "base_game_id": None,
+        # base_game_slug intentionally absent
+    }
+    fm = _build_frontmatter(game_data, "owned", "pdf-manual", None)
+    assert "base_game_bgg_id" not in fm
+    assert "base_game_slug" not in fm

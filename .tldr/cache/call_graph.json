@@ -1,0 +1,423 @@
+{
+  "edges": [
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_make_request",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "sleep_with_backoff_and_jitter"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_find_or_create_release",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_post_json"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "create_github_secret",
+      "to_file": "scripts/enable_hourly_updates.py",
+      "to_func": "get_repo_public_key"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_make_http_delete",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_request"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "__init__",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "CachedHttpClient"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "collection",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "collection"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_plays_to_games",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "plays"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "main",
+      "to_file": "scripts/enable_hourly_updates.py",
+      "to_func": "get_repo_from_config"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "setup_github_integration",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "GitHubAuth"
+    },
+    {
+      "from_file": "scripts/gamecache/downloader.py",
+      "from_func": "__init__",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "CacheBackendSqlite"
+    },
+    {
+      "from_file": "scripts/setup_bgg_token.py",
+      "from_func": "main",
+      "to_file": "scripts/setup_bgg_token.py",
+      "to_func": "save_token_to_config"
+    },
+    {
+      "from_file": "scripts/download_and_index.py",
+      "from_func": "main",
+      "to_file": "scripts/gamecache/config.py",
+      "to_func": "create_nested_config"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_make_request",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "BGGException"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_upload_file",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_request"
+    },
+    {
+      "from_file": "scripts/setup_bgg_token.py",
+      "from_func": "<module>",
+      "to_file": "scripts/setup_bgg_token.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_make_request",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "prettify_if_xml"
+    },
+    {
+      "from_file": "scripts/gamecache/http_client.py",
+      "from_func": "make_form_post",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_json_request"
+    },
+    {
+      "from_file": "scripts/download_and_index.py",
+      "from_func": "main",
+      "to_file": "scripts/gamecache/sqlite_indexer.py",
+      "to_func": "SqliteIndexer"
+    },
+    {
+      "from_file": "scripts/setup_bgg_token.py",
+      "from_func": "generate_token_via_worker",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_json_request"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "get_repo_public_key",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_request"
+    },
+    {
+      "from_file": "scripts/setup_bgg_token.py",
+      "from_func": "main",
+      "to_file": "scripts/setup_bgg_token.py",
+      "to_func": "generate_token_via_worker"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_find_or_create_release",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_request"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_games_list_to_games",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "log_item"
+    },
+    {
+      "from_file": "scripts/check_website.py",
+      "from_func": "check_website",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_http_request"
+    },
+    {
+      "from_file": "scripts/gamecache/indexer.py",
+      "from_func": "fetch_image",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_http_request"
+    },
+    {
+      "from_file": "scripts/gamecache/indexer.py",
+      "from_func": "_remove_game_name_prefix",
+      "to_file": "scripts/gamecache/indexer.py",
+      "to_func": "remove_prefix"
+    },
+    {
+      "from_file": "scripts/validate_setup.py",
+      "from_func": "main",
+      "to_file": "scripts/validate_setup.py",
+      "to_func": "validate_bgg_user"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_plays_to_games",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "after_players_hook"
+    },
+    {
+      "from_file": "scripts/download_and_index.py",
+      "from_func": "main",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "setup_github_integration"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "<module>",
+      "to_file": "scripts/enable_hourly_updates.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "scripts/setup_bgg_token.py",
+      "from_func": "main",
+      "to_file": "scripts/setup_bgg_token.py",
+      "to_func": "get_bgg_username_from_config"
+    },
+    {
+      "from_file": "scripts/validate_setup.py",
+      "from_func": "main",
+      "to_file": "scripts/validate_setup.py",
+      "to_func": "validate_python_deps"
+    },
+    {
+      "from_file": "scripts/validate_setup.py",
+      "from_func": "validate_bgg_user",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_http_request"
+    },
+    {
+      "from_file": "scripts/download_and_index.py",
+      "from_func": "main",
+      "to_file": "scripts/gamecache/config.py",
+      "to_func": "parse_config_file"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_is_token_valid",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_request"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_collection_to_games",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "collection"
+    },
+    {
+      "from_file": "scripts/gamecache/sqlite_indexer.py",
+      "from_func": "fetch_image",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_http_request"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_perform_device_flow",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_post_form"
+    },
+    {
+      "from_file": "scripts/gamecache/downloader.py",
+      "from_func": "__init__",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "BGGClient"
+    },
+    {
+      "from_file": "scripts/download_and_index.py",
+      "from_func": "<module>",
+      "to_file": "scripts/download_and_index.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "scripts/gamecache/http_client.py",
+      "from_func": "make_json_request",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_json_request"
+    },
+    {
+      "from_file": "scripts/gamecache/http_client.py",
+      "from_func": "get",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "HttpResponse"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "main",
+      "to_file": "scripts/enable_hourly_updates.py",
+      "to_func": "get_bgg_token_from_env"
+    },
+    {
+      "from_file": "scripts/validate_setup.py",
+      "from_func": "validate_config",
+      "to_file": "scripts/gamecache/config.py",
+      "to_func": "parse_config_file"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "game_list",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "chunks"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_games_list_to_games",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "suggested_numplayers"
+    },
+    {
+      "from_file": "scripts/gamecache/http_client.py",
+      "from_func": "get",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_http_request"
+    },
+    {
+      "from_file": "scripts/validate_setup.py",
+      "from_func": "<module>",
+      "to_file": "scripts/validate_setup.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_games_list_to_games",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "numplayers_to_result"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_upload_asset",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_upload_file"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "setup_github_integration",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "GitHubReleaseManager"
+    },
+    {
+      "from_file": "scripts/gamecache/downloader.py",
+      "from_func": "collection",
+      "to_file": "scripts/gamecache/models.py",
+      "to_func": "BoardGame"
+    },
+    {
+      "from_file": "scripts/download_and_index.py",
+      "from_func": "main",
+      "to_file": "scripts/gamecache/downloader.py",
+      "to_func": "Downloader"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "create_github_secret",
+      "to_file": "scripts/enable_hourly_updates.py",
+      "to_func": "encrypt_secret"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "main",
+      "to_file": "scripts/enable_hourly_updates.py",
+      "to_func": "create_github_secret"
+    },
+    {
+      "from_file": "scripts/gamecache/http_client.py",
+      "from_func": "make_json_request",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_http_request"
+    },
+    {
+      "from_file": "scripts/check_website.py",
+      "from_func": "main",
+      "to_file": "scripts/check_website.py",
+      "to_func": "check_website"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_make_http_post_json",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_request"
+    },
+    {
+      "from_file": "scripts/setup_bgg_token.py",
+      "from_func": "get_bgg_username_from_config",
+      "to_file": "scripts/gamecache/config.py",
+      "to_func": "parse_config_file"
+    },
+    {
+      "from_file": "scripts/download_and_index.py",
+      "from_func": "<module>",
+      "to_file": "scripts/setup_logging.py",
+      "to_func": "setup_logging"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_upload_asset",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_request"
+    },
+    {
+      "from_file": "scripts/gamecache/bgg_client.py",
+      "from_func": "_collection_to_games",
+      "to_file": "scripts/gamecache/bgg_client.py",
+      "to_func": "after_status_hook"
+    },
+    {
+      "from_file": "scripts/enable_hourly_updates.py",
+      "from_func": "main",
+      "to_file": "scripts/enable_hourly_updates.py",
+      "to_func": "show_manual_instructions"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_make_http_post_form",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_form_post"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_make_http_request",
+      "to_file": "scripts/gamecache/http_client.py",
+      "to_func": "make_json_request"
+    },
+    {
+      "from_file": "scripts/gamecache/github_integration.py",
+      "from_func": "_delete_existing_asset",
+      "to_file": "scripts/gamecache/github_integration.py",
+      "to_func": "_make_http_delete"
+    },
+    {
+      "from_file": "scripts/check_website.py",
+      "from_func": "check_website",
+      "to_file": "scripts/gamecache/config.py",
+      "to_func": "parse_config_file"
+    },
+    {
+      "from_file": "scripts/validate_setup.py",
+      "from_func": "main",
+      "to_file": "scripts/validate_setup.py",
+      "to_func": "validate_config"
+    },
+    {
+      "from_file": "scripts/check_website.py",
+      "from_func": "<module>",
+      "to_file": "scripts/check_website.py",
+      "to_func": "main"
+    }
+  ],
+  "languages": [
+    "javascript",
+    "python"
+  ],
+  "timestamp": 1776015520.1335073
+}

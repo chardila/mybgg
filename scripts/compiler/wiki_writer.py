@@ -86,7 +86,7 @@ def _build_frontmatter(
     ]
     if pdf_url is not None:
         lines.append(f'pdf_url: "{pdf_url}"')
-    if game_data.get("is_expansion"):
+    if game_data.get("is_expansion") and game_data.get("base_game_slug"):
         lines.append(f"base_game_bgg_id: {game_data['base_game_id']}")
         lines.append(f"base_game_slug: {game_data['base_game_slug']}")
     lines += [
