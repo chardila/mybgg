@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ''
+      edition:
+        description: 'Edition label (optional — defaults to BGG publication year)'
+        required: false
+        type: string
+        default: ''
       status:
         description: 'Ownership status'
         required: true
@@ -60,10 +65,14 @@ jobs:
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           BGG_ID: ${{ inputs.bgg_id }}
           PDF_URL: ${{ inputs.pdf_url }}
+          EDITION: ${{ inputs.edition }}
           STATUS: ${{ inputs.status }}
         run: |
           ARGS="--bgg_id $BGG_ID --status $STATUS --wiki_path wiki"
           if [ -n "$PDF_URL" ]; then
             ARGS="$ARGS --pdf_url $PDF_URL"
+          fi
+          if [ -n "$EDITION" ]; then
+            ARGS="$ARGS --edition $EDITION"
           fi
           python scripts/compiler/add_game.py $ARGS
