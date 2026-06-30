@@ -79,3 +79,15 @@ def test_sends_user_agent_header():
         scrape_bgg_rulebook(237182)
 
     assert "mybgg-wiki-compiler" in captured["headers"].get("User-Agent", "")
+
+
+def test_returns_none_on_parse_error():
+    from bs4 import BeautifulSoup
+    with (
+        patch("compiler.bgg_scraper.requests.get",
+              return_value=_mock_get("<invalid")),
+        patch("compiler.bgg_scraper.BeautifulSoup",
+              side_effect=Exception("parse error")),
+    ):
+        result = scrape_bgg_rulebook(237182)
+    assert result is None
