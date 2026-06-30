@@ -335,6 +335,7 @@ class BGGClient:
                         xml.string("minplayers", attribute="value", alias="min_players"),
                         xml.string("maxplayers", attribute="value", alias="max_players"),
                         xml.string("minage", attribute="value", alias="min_age"),
+                        xml.string("yearpublished", attribute="value", alias="yearpublished", required=False, default="0"),
                     ],
                     required=False,
                     alias="items",

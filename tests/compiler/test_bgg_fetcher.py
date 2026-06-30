@@ -20,6 +20,7 @@ BGG_GAME_DATA = {
     "numowned": "100000",
     "rating": "8.1",
     "expansions": [],
+    "yearpublished": "2018",
 }
 
 
@@ -58,3 +59,22 @@ def test_to_slug_with_spaces():
 
 def test_to_slug_with_special_chars():
     assert _to_slug("Arkham Horror: The Card Game") == "arkham-horror-the-card-game"
+
+
+def test_fetch_game_includes_yearpublished():
+    with patch("compiler.bgg_fetcher.BGGClient") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.game_list.return_value = [BGG_GAME_DATA]
+        mock_cls.return_value = mock_client
+        result = fetch_game(237182)
+    assert result["yearpublished"] == 2018
+
+
+def test_fetch_game_yearpublished_defaults_to_zero():
+    data_no_year = {k: v for k, v in BGG_GAME_DATA.items() if k != "yearpublished"}
+    with patch("compiler.bgg_fetcher.BGGClient") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.game_list.return_value = [data_no_year]
+        mock_cls.return_value = mock_client
+        result = fetch_game(237182)
+    assert result["yearpublished"] == 0

@@ -24,6 +24,7 @@ def fetch_game(bgg_id: int, token: str | None = None) -> dict:
         "weight": str(raw.get("weight", "")),
         "rank": str(raw.get("rank", "")),
         "playing_time": str(raw.get("playing_time", "")),
+        "yearpublished": int(raw.get("yearpublished", 0) or 0),
     }
 
 
