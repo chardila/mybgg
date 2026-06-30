@@ -14,15 +14,25 @@ def write_game(
     game_dir = Path(wiki_path) / "games" / game_data["slug"]
     game_dir.mkdir(parents=True, exist_ok=True)
 
+    warning = _llm_only_warning(game_data.get("edition", "unknown")) if source == "llm-only" else ""
+
     frontmatter = _build_frontmatter(game_data, status, source, pdf_url)
     index_content = sections.get("index", "")
-    (game_dir / "index.md").write_text(f"{frontmatter}\n{index_content}")
+    (game_dir / "index.md").write_text(f"{frontmatter}\n{warning}{index_content}")
 
     for section in ["setup", "rules", "teaching", "faq", "glossary"]:
         if section in sections:
-            (game_dir / f"{section}.md").write_text(sections[section])
+            (game_dir / f"{section}.md").write_text(f"{warning}{sections[section]}")
 
     _git_commit_and_push(wiki_path, game_data["slug"], game_data["name"])
+
+
+def _llm_only_warning(edition: str) -> str:
+    return (
+        "> [!WARNING]\n"
+        "> Contenido generado desde conocimiento general del LLM sin rulebook verificado.\n"
+        f"> Edición de referencia: **{edition}**. Puede diferir de otras ediciones.\n\n"
+    )
 
 
 def _build_frontmatter(

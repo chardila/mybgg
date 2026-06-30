@@ -95,3 +95,39 @@ def test_build_frontmatter_edition_defaults_when_missing():
     fm = _build_frontmatter(GAME_DATA, "owned", "pdf-manual", None)
     assert 'edition: "unknown"' in fm
     assert "yearpublished: 0" in fm
+
+
+GAME_DATA_LLM = {
+    "id": 237182,
+    "name": "Root",
+    "slug": "root-kickstarter",
+    "edition": "kickstarter",
+    "yearpublished": 2019,
+    "mechanics": ["Area Control"],
+    "players": "2-4",
+    "weight": "3.72",
+    "rank": "21",
+}
+
+
+def test_llm_only_warning_appears_in_all_sections(tmp_path):
+    with patch("compiler.wiki_writer._git_commit_and_push"):
+        write_game(GAME_DATA_LLM, SECTIONS, str(tmp_path), "owned", "llm-only")
+
+    game_dir = tmp_path / "games" / "root-kickstarter"
+    for section in ["index", "setup", "rules", "teaching", "faq", "glossary"]:
+        content = (game_dir / f"{section}.md").read_text()
+        assert "[!WARNING]" in content
+        assert "kickstarter" in content
+        assert "LLM" in content
+
+
+def test_pdf_manual_source_has_no_warning(tmp_path):
+    with patch("compiler.wiki_writer._git_commit_and_push"):
+        write_game(GAME_DATA_WITH_EDITION, SECTIONS, str(tmp_path), "owned", "pdf-manual",
+                   "https://example.com/root.pdf")
+
+    game_dir = tmp_path / "games" / "root-2018"
+    for section in ["setup", "rules", "teaching", "faq", "glossary"]:
+        content = (game_dir / f"{section}.md").read_text()
+        assert "[!WARNING]" not in content
