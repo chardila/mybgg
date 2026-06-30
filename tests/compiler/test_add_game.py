@@ -9,6 +9,7 @@ GAME_DATA = {
     "categories": ["Animals"], "players": "2-4",
     "min_players": 2, "max_players": 4,
     "weight": "3.72", "rank": "21", "playing_time": "60",
+    "yearpublished": 2018,
 }
 
 FULL_SECTIONS = {
@@ -88,7 +89,7 @@ def test_acquire_pdf_raises_when_nothing_found():
 
 def test_main_with_pdf_url(tmp_path):
     with (
-        patch("compiler.add_game.fetch_game", return_value=GAME_DATA),
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
         patch("compiler.add_game.acquire_pdf", return_value=(b"%PDF", "pdf-manual", "https://example.com/root.pdf")),
         patch("compiler.add_game.extract_text", return_value="Rules text"),
         patch("compiler.add_game.DeepSeekProvider"),
@@ -106,7 +107,7 @@ def test_main_with_pdf_url(tmp_path):
 
 def test_main_fails_when_no_pdf_found(tmp_path):
     with (
-        patch("compiler.add_game.fetch_game", return_value=GAME_DATA),
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
         patch("compiler.add_game.acquire_pdf", side_effect=RuntimeError("Could not find a rulebook PDF")),
         patch("compiler.add_game.DeepSeekProvider"),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
@@ -115,3 +116,62 @@ def test_main_fails_when_no_pdf_found(tmp_path):
         with pytest.raises(SystemExit) as exc:
             main(bgg_id=237182, pdf_url=None, status="owned", wiki_path=str(tmp_path))
         assert exc.value.code == 1
+
+
+# ── _resolve_edition unit tests ──────────────────────────────────────────────
+
+def test_resolve_edition_uses_year_by_default():
+    from compiler.add_game import _resolve_edition
+    assert _resolve_edition({"yearpublished": 2018}, None) == "2018"
+
+
+def test_resolve_edition_uses_override_when_provided():
+    from compiler.add_game import _resolve_edition
+    assert _resolve_edition({"yearpublished": 2018}, "Kickstarter Edition") == "kickstarter-edition"
+
+
+def test_resolve_edition_returns_unknown_when_no_year():
+    from compiler.add_game import _resolve_edition
+    assert _resolve_edition({"yearpublished": 0}, None) == "unknown"
+
+
+def test_main_slug_includes_edition(tmp_path):
+    captured = {}
+    def capture_write(game_data, *args, **kwargs):
+        captured["slug"] = game_data["slug"]
+        captured["edition"] = game_data["edition"]
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.add_game.acquire_pdf", return_value=(b"%PDF", "pdf-manual", "https://x.com/r.pdf")),
+        patch("compiler.add_game.extract_text", return_value="Rules"),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
+        patch("compiler.add_game.write_game", side_effect=capture_write),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url=None, status="owned", wiki_path=str(tmp_path), edition=None)
+
+    assert captured["slug"] == "root-2018"
+    assert captured["edition"] == "2018"
+
+
+def test_main_slug_uses_edition_override(tmp_path):
+    captured = {}
+    def capture_write(game_data, *args, **kwargs):
+        captured["slug"] = game_data["slug"]
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.add_game.acquire_pdf", return_value=(b"%PDF", "pdf-manual", "https://x.com/r.pdf")),
+        patch("compiler.add_game.extract_text", return_value="Rules"),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
+        patch("compiler.add_game.write_game", side_effect=capture_write),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url=None, status="owned", wiki_path=str(tmp_path), edition="Kickstarter")
+
+    assert captured["slug"] == "root-kickstarter"
