@@ -21,6 +21,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
         f"- Playing time: {game_data['playing_time']} min\n"
         f"- Weight: {game_data['weight']}/5\n"
         f"- BGG Rank: {game_data['rank']}\n"
+        f"- Edition: {game_data.get('edition', 'unknown')}\n"
         f"- Mechanics: {', '.join(game_data['mechanics'])}\n"
         f"- Categories: {', '.join(game_data['categories'])}\n"
         f"- Description: {game_data['description'][:500]}\n"

@@ -58,3 +58,14 @@ def test_compile_game_continues_on_section_failure():
     assert "setup" in sections
     assert sections["setup"] == "# Setup content"
     assert len(failures) == 1
+
+
+def test_compile_game_includes_edition_in_prompts():
+    provider = MagicMock()
+    provider.generate.return_value = "content"
+    game_data_with_edition = {**GAME_DATA, "edition": "2018", "yearpublished": 2018}
+
+    compile_game(game_data_with_edition, rulebook_text=None, provider=provider)
+
+    all_prompts = " ".join(str(call) for call in provider.generate.call_args_list)
+    assert "2018" in all_prompts
