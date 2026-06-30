@@ -204,12 +204,16 @@
 
 <script>
   // Language state
-  let currentLanguage = 'es';
+  window.currentLanguage = 'es';
 
   function setLanguage(lang) {
-    currentLanguage = lang;
+    window.currentLanguage = lang;
     document.getElementById('btn-es').classList.toggle('active', lang === 'es');
     document.getElementById('btn-en').classList.toggle('active', lang === 'en');
+  }
+
+  function resetToDiscovery() {
+    // full implementation comes in Task 8
   }
 
   // Placeholder: full JS will be added in Task 8
