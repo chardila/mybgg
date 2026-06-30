@@ -25,12 +25,19 @@ IMPORTANT: Only answer questions related to board games. If the user asks about 
     es: (gameName) =>
       `Eres un experto en ${gameName}. Tienes acceso al wiki completo del juego incluyendo reglas, setup, guía de enseñanza, FAQ y glosario.
 Responde en español. Preserva los nombres oficiales de componentes y mecánicas en inglés cuando no hay traducción establecida.
-Sé preciso con las reglas. Si algo no está en el wiki, dilo claramente.
-IMPORTANTE: Solo responde preguntas sobre ${gameName} y juegos de mesa en general. Si el usuario pregunta sobre cualquier otro tema, responde amablemente que solo puedes ayudar con preguntas sobre este juego y redirige la conversación.`,
+IMPORTANTE: Solo responde preguntas sobre ${gameName} y juegos de mesa en general. Si el usuario pregunta sobre cualquier otro tema, responde amablemente que solo puedes ayudar con preguntas sobre este juego y redirige la conversación.
+FUENTE: Siempre indica de dónde viene tu respuesta:
+- Si la información está en el wiki, comienza con "📖 Según el wiki:"
+- Si la información NO está en el wiki y usas conocimiento general, comienza con "🧠 No está en el wiki — respondo con conocimiento general:"
+- Si la respuesta combina ambas fuentes, usa "📖 Del wiki:" y "🧠 Conocimiento general:" para separar cada parte.`,
     en: (gameName) =>
       `You are an expert on ${gameName}. You have access to the complete game wiki including rules, setup, teaching guide, FAQ, and glossary.
-Respond in English. Be precise about rules. If something is not in the wiki, say so clearly.
-IMPORTANT: Only answer questions about ${gameName} and board games in general. If the user asks about any other topic, kindly let them know you can only help with questions about this game and redirect the conversation.`,
+Respond in English. Be precise about rules.
+IMPORTANT: Only answer questions about ${gameName} and board games in general. If the user asks about any other topic, kindly let them know you can only help with questions about this game and redirect the conversation.
+SOURCE: Always indicate where your answer comes from:
+- If the information is in the wiki, start with "📖 From the wiki:"
+- If the information is NOT in the wiki and you use general knowledge, start with "🧠 Not in the wiki — answering from general knowledge:"
+- If the answer combines both, use "📖 From the wiki:" and "🧠 General knowledge:" to separate each part.`,
   },
 };
 
@@ -117,6 +124,47 @@ async function handleGetGames(request, env) {
   });
 }
 
+async function handleDebugContext(request, env) {
+  const url = new URL(request.url);
+  const game = url.searchParams.get('game');
+
+  const catalog = await env.WIKI.get('catalog');
+  const result = { catalog_bytes: catalog ? catalog.length : 0 };
+
+  if (game) {
+    if (!/^[a-z0-9-]+$/.test(game)) {
+      return new Response(JSON.stringify({ error: 'Invalid game slug' }), {
+        status: 400,
+        headers: { ...getCorsHeaders(request), 'Content-Type': 'application/json' },
+      });
+    }
+    const [index, rules, teaching, faq, glossary] = await Promise.all([
+      env.WIKI.get(`games/${game}/index`),
+      env.WIKI.get(`games/${game}/rules`),
+      env.WIKI.get(`games/${game}/teaching`),
+      env.WIKI.get(`games/${game}/faq`),
+      env.WIKI.get(`games/${game}/glossary`),
+    ]);
+    result.game = game;
+    result.sections = {
+      index: index ? index.length : null,
+      rules: rules ? rules.length : null,
+      teaching: teaching ? teaching.length : null,
+      faq: faq ? faq.length : null,
+      glossary: glossary ? glossary.length : null,
+    };
+    const total = [index, rules, teaching, faq, glossary]
+      .filter(Boolean)
+      .reduce((s, v) => s + v.length, 0);
+    result.total_context_bytes = total;
+    result.has_wiki = total > 0;
+  }
+
+  return new Response(JSON.stringify(result, null, 2), {
+    headers: { ...getCorsHeaders(request), 'Content-Type': 'application/json' },
+  });
+}
+
 async function handleChat(request, env) {
   let body;
   try {
@@ -193,6 +241,9 @@ export default {
     }
     if (url.pathname === '/api/games' && request.method === 'GET') {
       return handleGetGames(request, env);
+    }
+    if (url.pathname === '/api/debug/context' && request.method === 'GET') {
+      return handleDebugContext(request, env);
     }
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       return handleChat(request, env);
