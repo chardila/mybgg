@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       pdf_url:
-        description: 'Direct URL to rulebook PDF (optional — searched automatically if omitted)'
+        description: 'Direct URL to the rulebook PDF for your physical edition (if omitted, --edition is required and content is generated from LLM knowledge)'
         required: false
         type: string
         default: ''
@@ -62,7 +62,6 @@ jobs:
         env:
           GAMECACHE_BGG_TOKEN: ${{ secrets.GAMECACHE_BGG_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           BGG_ID: ${{ inputs.bgg_id }}
           PDF_URL: ${{ inputs.pdf_url }}
           EDITION: ${{ inputs.edition }}
