@@ -131,3 +131,98 @@ def test_pdf_manual_source_has_no_warning(tmp_path):
     for section in ["setup", "rules", "teaching", "faq", "glossary"]:
         content = (game_dir / f"{section}.md").read_text()
         assert "[!WARNING]" not in content
+
+
+GAME_DATA_EXPANSION = {
+    "id": 161936,
+    "name": "Pandemic: In the Lab",
+    "slug": "pandemic-in-the-lab-2014",
+    "edition": "2014",
+    "yearpublished": 2014,
+    "mechanics": ["Cooperative Game"],
+    "players": "2-4",
+    "weight": "2.5",
+    "rank": "Not Ranked",
+    "is_expansion": True,
+    "base_game_id": 30549,
+    "base_game_slug": "pandemic-2008",
+    "base_game_name": "Pandemic",
+}
+
+
+def test_expansion_frontmatter_includes_base_game_fields():
+    fm = _build_frontmatter(GAME_DATA_EXPANSION, "owned", "pdf-manual", None)
+    assert "base_game_bgg_id: 30549" in fm
+    assert 'base_game_slug: pandemic-2008' in fm
+
+
+def test_base_game_frontmatter_has_no_expansion_fields():
+    fm = _build_frontmatter(GAME_DATA_WITH_EDITION, "owned", "pdf-manual", None)
+    assert "base_game_bgg_id" not in fm
+    assert "base_game_slug" not in fm
+
+
+def test_update_base_game_creates_expansions_section(tmp_path):
+    from compiler.wiki_writer import _update_base_game_expansions
+    base_dir = tmp_path / "games" / "pandemic-2008"
+    base_dir.mkdir(parents=True)
+    (base_dir / "index.md").write_text("---\nbgg_id: 30549\n---\n\n# Pandemic\n\nGreat game.")
+
+    _update_base_game_expansions(str(tmp_path), "pandemic-2008", "pandemic-in-the-lab-2014", "Pandemic: In the Lab")
+
+    content = (base_dir / "index.md").read_text()
+    assert "## Expansions" in content
+    assert "[[pandemic-in-the-lab-2014]]" in content
+    assert "Pandemic: In the Lab" in content
+
+
+def test_update_base_game_appends_to_existing_expansions_section(tmp_path):
+    from compiler.wiki_writer import _update_base_game_expansions
+    base_dir = tmp_path / "games" / "pandemic-2008"
+    base_dir.mkdir(parents=True)
+    (base_dir / "index.md").write_text(
+        "---\nbgg_id: 30549\n---\n\n# Pandemic\n\n## Expansions\n\n- [[pandemic-on-the-brink-2009]] — On the Brink\n"
+    )
+
+    _update_base_game_expansions(str(tmp_path), "pandemic-2008", "pandemic-in-the-lab-2014", "Pandemic: In the Lab")
+
+    content = (base_dir / "index.md").read_text()
+    assert "[[pandemic-on-the-brink-2009]]" in content
+    assert "[[pandemic-in-the-lab-2014]]" in content
+    assert content.count("## Expansions") == 1
+
+
+def test_update_base_game_does_not_duplicate_entry(tmp_path):
+    from compiler.wiki_writer import _update_base_game_expansions
+    base_dir = tmp_path / "games" / "pandemic-2008"
+    base_dir.mkdir(parents=True)
+    (base_dir / "index.md").write_text(
+        "---\nbgg_id: 30549\n---\n\n## Expansions\n\n- [[pandemic-in-the-lab-2014]] — Pandemic: In the Lab\n"
+    )
+
+    _update_base_game_expansions(str(tmp_path), "pandemic-2008", "pandemic-in-the-lab-2014", "Pandemic: In the Lab")
+
+    content = (base_dir / "index.md").read_text()
+    assert content.count("pandemic-in-the-lab-2014") == 1
+
+
+def test_write_game_expansion_calls_update_base_game(tmp_path):
+    with (
+        patch("compiler.wiki_writer._git_commit_and_push"),
+        patch("compiler.wiki_writer._update_base_game_expansions") as mock_update,
+    ):
+        write_game(GAME_DATA_EXPANSION, SECTIONS, str(tmp_path), "owned", "pdf-manual")
+
+    mock_update.assert_called_once_with(
+        str(tmp_path), "pandemic-2008", "pandemic-in-the-lab-2014", "Pandemic: In the Lab"
+    )
+
+
+def test_write_game_base_game_does_not_call_update(tmp_path):
+    with (
+        patch("compiler.wiki_writer._git_commit_and_push"),
+        patch("compiler.wiki_writer._update_base_game_expansions") as mock_update,
+    ):
+        write_game(GAME_DATA_WITH_EDITION, SECTIONS, str(tmp_path), "owned", "pdf-manual")
+
+    mock_update.assert_not_called()

@@ -24,7 +24,20 @@ def write_game(
         if section in sections:
             (game_dir / f"{section}.md").write_text(f"{warning}{sections[section]}")
 
-    _git_commit_and_push(wiki_path, game_data["slug"], game_data["name"])
+    if game_data.get("is_expansion") and game_data.get("base_game_slug"):
+        _update_base_game_expansions(
+            wiki_path,
+            game_data["base_game_slug"],
+            game_data["slug"],
+            game_data["name"],
+        )
+
+    _git_commit_and_push(
+        wiki_path,
+        game_data["slug"],
+        game_data["name"],
+        game_data.get("base_game_slug"),
+    )
 
 
 def _llm_only_warning(edition: str) -> str:
@@ -33,6 +46,26 @@ def _llm_only_warning(edition: str) -> str:
         "> Contenido generado desde conocimiento general del LLM sin rulebook verificado.\n"
         f"> Edición de referencia: **{edition}**. Puede diferir de otras ediciones.\n\n"
     )
+
+
+def _update_base_game_expansions(
+    wiki_path: str,
+    base_game_slug: str,
+    expansion_slug: str,
+    expansion_name: str,
+) -> None:
+    index_path = Path(wiki_path) / "games" / base_game_slug / "index.md"
+    if not index_path.exists():
+        return
+    content = index_path.read_text()
+    new_entry = f"- [[{expansion_slug}]] — {expansion_name}"
+    if new_entry in content:
+        return
+    if "## Expansions" in content:
+        content = content.rstrip() + f"\n{new_entry}\n"
+    else:
+        content = content.rstrip() + f"\n\n## Expansions\n\n{new_entry}\n"
+    index_path.write_text(content)
 
 
 def _build_frontmatter(
@@ -53,6 +86,9 @@ def _build_frontmatter(
     ]
     if pdf_url is not None:
         lines.append(f'pdf_url: "{pdf_url}"')
+    if game_data.get("is_expansion"):
+        lines.append(f"base_game_bgg_id: {game_data['base_game_id']}")
+        lines.append(f"base_game_slug: {game_data['base_game_slug']}")
     lines += [
         f"players: \"{game_data['players']}\"",
         f"weight: {game_data['weight']}",
@@ -68,8 +104,15 @@ def _build_frontmatter(
     return "\n".join(lines)
 
 
-def _git_commit_and_push(wiki_path: str, slug: str, name: str) -> None:
+def _git_commit_and_push(
+    wiki_path: str,
+    slug: str,
+    name: str,
+    base_game_slug: str | None = None,
+) -> None:
     _git(wiki_path, "add", f"games/{slug}/")
+    if base_game_slug:
+        _git(wiki_path, "add", f"games/{base_game_slug}/index.md")
     result = subprocess.run(
         ["git", "-C", wiki_path, "diff", "--cached", "--quiet"],
         capture_output=True,
