@@ -314,7 +314,8 @@
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (true) {
+      let finished = false;
+      while (!finished) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -328,6 +329,7 @@
             streamDiv.innerHTML = renderMarkdown(fullText);
             history.push({ role: 'user', content: userText });
             history.push({ role: 'assistant', content: fullText });
+            finished = true;
             break;
           }
           try {
@@ -335,6 +337,7 @@
             if (parsed.error) {
               streamDiv.className = 'message error';
               streamDiv.innerHTML = parsed.error;
+              finished = true;
               break;
             }
             if (parsed.token) {
