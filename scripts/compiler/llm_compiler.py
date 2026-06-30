@@ -19,9 +19,22 @@ def _rulebook_block(rulebook_text: str | None, game_data: dict) -> str:
     )
 
 
+def _expansion_block(game_data: dict) -> str:
+    if not game_data.get("is_expansion"):
+        return ""
+    base_name = game_data.get("base_game_name", "the base game")
+    return (
+        f"This is an expansion for **{base_name}**. "
+        "Focus exclusively on what this expansion adds: new components, new rules, new mechanics. "
+        f"Do not repeat or summarize the base game rules. "
+        f"Assume the reader already knows how to play {base_name}.\n\n"
+    )
+
+
 def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
     name = game_data["name"]
     rb = _rulebook_block(rulebook_text, game_data)
+    ex = _expansion_block(game_data)
     meta = (
         f"- Players: {game_data['players']}\n"
         f"- Playing time: {game_data['playing_time']} min\n"
@@ -34,7 +47,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
     )
     return {
         "index": (
-            f"Write a Markdown overview page for the board game \"{name}\".\n\n"
+            f"{ex}Write a Markdown overview page for the board game \"{name}\".\n\n"
             f"BGG Data:\n{meta}{rb}\n"
             "Include:\n"
             "1. A 2-3 paragraph summary of what the game is and why it is interesting\n"
@@ -42,7 +55,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "3. Links to related mechanics using [[Mechanic Name]] syntax"
         ),
         "setup": (
-            f"Write a Markdown setup guide for \"{name}\".\n{rb}\n"
+            f"{ex}Write a Markdown setup guide for \"{name}\".\n{rb}\n"
             "Include:\n"
             "1. Complete components list\n"
             "2. Step-by-step setup instructions (numbered)\n"
@@ -50,7 +63,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "Use [[term]] syntax for game-specific components."
         ),
         "rules": (
-            f"Write a complete Markdown rules reference for \"{name}\".\n{rb}\n"
+            f"{ex}Write a complete Markdown rules reference for \"{name}\".\n{rb}\n"
             "Include:\n"
             "1. Turn structure (in order)\n"
             "2. Core mechanics explained clearly\n"
@@ -60,7 +73,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "Use [[term]] syntax for game-specific terms."
         ),
         "teaching": (
-            f"Write a Markdown teaching guide for explaining \"{name}\" to new players.\n{rb}\n"
+            f"{ex}Write a Markdown teaching guide for explaining \"{name}\" to new players.\n{rb}\n"
             "Include these sections:\n"
             "1. **5-minute explanation** — shortest useful introduction\n"
             "2. **Suggested teaching order** — what to explain first, second, third\n"
@@ -70,7 +83,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "6. **Frequently forgotten rules** — even experienced players miss these"
         ),
         "faq": (
-            f"Write a Markdown FAQ for \"{name}\" addressing common rules questions.\n{rb}\n"
+            f"{ex}Write a Markdown FAQ for \"{name}\" addressing common rules questions.\n{rb}\n"
             "Format as Q&A pairs. Cover:\n"
             "1. Situations that come up frequently\n"
             "2. Rules interactions commonly misunderstood\n"
@@ -78,7 +91,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "Use [[term]] syntax for game-specific terms."
         ),
         "glossary": (
-            f"Write a Markdown glossary for \"{name}\" covering all game-specific terms.\n{rb}\n"
+            f"{ex}Write a Markdown glossary for \"{name}\" covering all game-specific terms.\n{rb}\n"
             "Format each entry as:\n"
             "## Term Name\n\n"
             "English definition (1-2 sentences).\n\n"

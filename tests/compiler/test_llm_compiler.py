@@ -87,3 +87,42 @@ def test_rulebook_block_with_text_ignores_edition():
     result = _rulebook_block("Chapter 1: Setup...", game_data)
     assert "Chapter 1: Setup" in result
     assert "general knowledge" not in result
+
+
+EXPANSION_DATA = {
+    **GAME_DATA,
+    "name": "Pandemic: In the Lab",
+    "is_expansion": True,
+    "base_game_name": "Pandemic",
+    "edition": "2014",
+}
+
+
+def test_expansion_block_is_empty_for_base_game():
+    from compiler.llm_compiler import _expansion_block
+    result = _expansion_block({**GAME_DATA, "is_expansion": False})
+    assert result == ""
+
+
+def test_expansion_block_contains_base_game_name():
+    from compiler.llm_compiler import _expansion_block
+    result = _expansion_block(EXPANSION_DATA)
+    assert "Pandemic" in result
+    assert "expansion" in result.lower()
+    assert "do not repeat" in result.lower() or "focus exclusively" in result.lower()
+
+
+def test_all_prompts_include_expansion_block():
+    from compiler.llm_compiler import _prompts
+    prompts = _prompts(EXPANSION_DATA, rulebook_text=None)
+    for section, prompt_text in prompts.items():
+        assert "Pandemic" in prompt_text, f"expansion block missing from '{section}' prompt"
+
+
+def test_base_game_prompts_have_no_expansion_block():
+    from compiler.llm_compiler import _prompts
+    game_data = {**GAME_DATA, "is_expansion": False, "edition": "2018"}
+    prompts = _prompts(game_data, rulebook_text=None)
+    for section, prompt_text in prompts.items():
+        assert "expansion" not in prompt_text.lower() or "expansion" in prompt_text.lower() and "Focus exclusively" not in prompt_text, \
+            f"expansion block unexpectedly found in '{section}' prompt"
