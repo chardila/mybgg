@@ -18,106 +18,6 @@ FULL_SECTIONS = {
 }
 
 
-# ── acquire_pdf unit tests ──────────────────────────────────────────────────
-
-def test_acquire_pdf_uses_manual_url():
-    from compiler.add_game import acquire_pdf
-    with (
-        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF manual") as mock_fetch,
-    ):
-        pdf_bytes, source, resolved_url = acquire_pdf(GAME_DATA, "https://example.com/root.pdf", "key")
-
-    assert pdf_bytes == b"%PDF manual"
-    assert source == "pdf-manual"
-    assert resolved_url == "https://example.com/root.pdf"
-    mock_fetch.assert_called_once_with("https://example.com/root.pdf")
-
-
-def test_acquire_pdf_uses_tavily_when_no_url():
-    from compiler.add_game import acquire_pdf
-    with (
-        patch("compiler.add_game.search_rulebook_pdf", return_value="https://found.com/rules.pdf"),
-        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF web") as mock_fetch,
-    ):
-        pdf_bytes, source, resolved_url = acquire_pdf(GAME_DATA, None, "tavily-key")
-
-    assert pdf_bytes == b"%PDF web"
-    assert source == "pdf-web"
-    assert resolved_url == "https://found.com/rules.pdf"
-    mock_fetch.assert_called_once_with("https://found.com/rules.pdf")
-
-
-def test_acquire_pdf_falls_back_to_bgg_when_tavily_fails():
-    from compiler.add_game import acquire_pdf
-    with (
-        patch("compiler.add_game.search_rulebook_pdf", return_value=None),
-        patch("compiler.add_game.scrape_bgg_rulebook", return_value="https://bgg.com/rules.pdf"),
-        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF bgg") as mock_fetch,
-    ):
-        pdf_bytes, source, resolved_url = acquire_pdf(GAME_DATA, None, "tavily-key")
-
-    assert pdf_bytes == b"%PDF bgg"
-    assert source == "pdf-bgg"
-    assert resolved_url == "https://bgg.com/rules.pdf"
-    mock_fetch.assert_called_once_with("https://bgg.com/rules.pdf")
-
-
-def test_acquire_pdf_skips_tavily_when_no_key():
-    from compiler.add_game import acquire_pdf
-    with (
-        patch("compiler.add_game.search_rulebook_pdf") as mock_tavily,
-        patch("compiler.add_game.scrape_bgg_rulebook", return_value="https://bgg.com/rules.pdf"),
-        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF bgg"),
-    ):
-        _, source, _ = acquire_pdf(GAME_DATA, None, None)
-
-    mock_tavily.assert_not_called()
-    assert source == "pdf-bgg"
-
-
-def test_acquire_pdf_raises_when_nothing_found():
-    from compiler.add_game import acquire_pdf
-    with (
-        patch("compiler.add_game.search_rulebook_pdf", return_value=None),
-        patch("compiler.add_game.scrape_bgg_rulebook", return_value=None),
-    ):
-        with pytest.raises(RuntimeError, match="Could not find a rulebook PDF"):
-            acquire_pdf(GAME_DATA, None, "tavily-key")
-
-
-# ── main() integration tests ────────────────────────────────────────────────
-
-def test_main_with_pdf_url(tmp_path):
-    with (
-        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
-        patch("compiler.add_game.acquire_pdf", return_value=(b"%PDF", "pdf-manual", "https://example.com/root.pdf")),
-        patch("compiler.add_game.extract_text", return_value="Rules text"),
-        patch("compiler.add_game.DeepSeekProvider"),
-        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
-        patch("compiler.add_game.write_game") as mock_write,
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GAMECACHE_BGG_TOKEN": "bgg-token"}),
-    ):
-        from compiler.add_game import main
-        main(bgg_id=237182, pdf_url="https://example.com/root.pdf",
-             status="owned", wiki_path=str(tmp_path))
-
-    write_args = mock_write.call_args[0]
-    assert write_args[4] == "pdf-manual"
-
-
-def test_main_fails_when_no_pdf_found(tmp_path):
-    with (
-        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
-        patch("compiler.add_game.acquire_pdf", side_effect=RuntimeError("Could not find a rulebook PDF")),
-        patch("compiler.add_game.DeepSeekProvider"),
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
-    ):
-        from compiler.add_game import main
-        with pytest.raises(SystemExit) as exc:
-            main(bgg_id=237182, pdf_url=None, status="owned", wiki_path=str(tmp_path))
-        assert exc.value.code == 1
-
-
 # ── _resolve_edition unit tests ──────────────────────────────────────────────
 
 def test_resolve_edition_uses_year_by_default():
@@ -135,7 +35,60 @@ def test_resolve_edition_returns_unknown_when_no_year():
     assert _resolve_edition({"yearpublished": 0}, None) == "unknown"
 
 
-def test_main_slug_includes_edition(tmp_path):
+# ── main() path tests ────────────────────────────────────────────────────────
+
+def test_main_with_pdf_url_uses_pdf_manual_source(tmp_path):
+    with (
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
+        patch("compiler.add_game.extract_text", return_value="Rules text"),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
+        patch("compiler.add_game.write_game") as mock_write,
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GAMECACHE_BGG_TOKEN": "bgg-token"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url="https://example.com/root.pdf",
+             status="owned", wiki_path=str(tmp_path))
+
+    write_args = mock_write.call_args[0]
+    assert write_args[4] == "pdf-manual"
+    assert write_args[5] == "https://example.com/root.pdf"
+
+
+def test_main_with_llm_only_path_passes_none_rulebook(tmp_path):
+    with (
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])) as mock_compile,
+        patch("compiler.add_game.write_game") as mock_write,
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url=None, edition="2023 Edition",
+             status="owned", wiki_path=str(tmp_path))
+
+    compile_args = mock_compile.call_args[0]
+    assert compile_args[1] is None  # rulebook_text is None
+    write_args = mock_write.call_args[0]
+    assert write_args[4] == "llm-only"
+    assert write_args[5] is None  # no resolved_url
+
+
+def test_main_exits_when_no_pdf_url_and_no_edition(tmp_path):
+    with (
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
+    ):
+        from compiler.add_game import main
+        with pytest.raises(SystemExit) as exc:
+            main(bgg_id=237182, pdf_url=None, edition=None,
+                 status="owned", wiki_path=str(tmp_path))
+        assert exc.value.code == 1
+
+
+def test_main_slug_includes_edition_from_year(tmp_path):
     captured = {}
     def capture_write(game_data, *args, **kwargs):
         captured["slug"] = game_data["slug"]
@@ -143,7 +96,7 @@ def test_main_slug_includes_edition(tmp_path):
 
     with (
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
-        patch("compiler.add_game.acquire_pdf", return_value=(b"%PDF", "pdf-manual", "https://x.com/r.pdf")),
+        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
         patch("compiler.add_game.extract_text", return_value="Rules"),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
@@ -151,7 +104,8 @@ def test_main_slug_includes_edition(tmp_path):
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
     ):
         from compiler.add_game import main
-        main(bgg_id=237182, pdf_url=None, status="owned", wiki_path=str(tmp_path), edition=None)
+        main(bgg_id=237182, pdf_url="https://example.com/root.pdf",
+             status="owned", wiki_path=str(tmp_path), edition=None)
 
     assert captured["slug"] == "root-2018"
     assert captured["edition"] == "2018"
@@ -164,14 +118,13 @@ def test_main_slug_uses_edition_override(tmp_path):
 
     with (
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
-        patch("compiler.add_game.acquire_pdf", return_value=(b"%PDF", "pdf-manual", "https://x.com/r.pdf")),
-        patch("compiler.add_game.extract_text", return_value="Rules"),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
         patch("compiler.add_game.write_game", side_effect=capture_write),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
     ):
         from compiler.add_game import main
-        main(bgg_id=237182, pdf_url=None, status="owned", wiki_path=str(tmp_path), edition="Kickstarter")
+        main(bgg_id=237182, pdf_url=None, status="owned",
+             wiki_path=str(tmp_path), edition="Kickstarter")
 
     assert captured["slug"] == "root-kickstarter"

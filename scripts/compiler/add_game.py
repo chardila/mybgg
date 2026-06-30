@@ -11,8 +11,6 @@ from compiler.pdf_parser import extract_text
 from compiler.llm_provider import DeepSeekProvider
 from compiler.llm_compiler import compile_game
 from compiler.wiki_writer import write_game
-from compiler.web_searcher import search_rulebook_pdf
-from compiler.bgg_scraper import scrape_bgg_rulebook
 
 
 def _resolve_edition(game_data: dict, edition_override: str | None) -> str:
@@ -20,37 +18,6 @@ def _resolve_edition(game_data: dict, edition_override: str | None) -> str:
         return _to_slug(edition_override)
     year = game_data.get("yearpublished", 0)
     return str(year) if year else "unknown"
-
-
-def acquire_pdf(
-    game_data: dict,
-    pdf_url: str | None,
-    tavily_key: str | None,
-) -> tuple[bytes, str, str | None]:
-    """Return (pdf_bytes, source_label, resolved_url) or raise RuntimeError."""
-    if pdf_url:
-        print(f"Downloading PDF from {pdf_url}...")
-        return fetch_pdf(pdf_url), "pdf-manual", pdf_url
-
-    if tavily_key:
-        print("No PDF URL — searching Tavily...")
-        found_url = search_rulebook_pdf(game_data["name"], tavily_key)
-        if found_url:
-            print(f"Found via web search: {found_url}")
-            return fetch_pdf(found_url), "pdf-web", found_url
-    else:
-        print("TAVILY_API_KEY not set — skipping web search.")
-
-    print(f"Checking BGG Files for {game_data['name']}...")
-    found_url = scrape_bgg_rulebook(game_data["id"])
-    if found_url:
-        print(f"Found in BGG Files: {found_url}")
-        return fetch_pdf(found_url), "pdf-bgg", found_url
-
-    raise RuntimeError(
-        f"Could not find a rulebook PDF for '{game_data['name']}'. "
-        "Provide a --pdf_url argument to proceed."
-    )
 
 
 def main(
@@ -62,7 +29,6 @@ def main(
 ) -> None:
     bgg_token = os.environ.get("GAMECACHE_BGG_TOKEN") or None
     deepseek_key = os.environ["DEEPSEEK_API_KEY"]
-    tavily_key = os.environ.get("TAVILY_API_KEY") or None
 
     provider = DeepSeekProvider(api_key=deepseek_key)
 
@@ -74,15 +40,20 @@ def main(
     game_data["edition"] = resolved_edition
     print(f"Found: {game_data['name']} ({game_data['slug']})")
 
-    try:
-        pdf_bytes, source, resolved_url = acquire_pdf(game_data, pdf_url, tavily_key)
-    except RuntimeError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    print("Extracting text from PDF...")
-    rulebook_text = extract_text(pdf_bytes)
-    print(f"Extracted {len(rulebook_text)} characters from PDF.")
+    if pdf_url:
+        print(f"Downloading PDF from {pdf_url}...")
+        pdf_bytes = fetch_pdf(pdf_url)
+        rulebook_text = extract_text(pdf_bytes)
+        print(f"Extracted {len(rulebook_text)} characters from PDF.")
+        source = "pdf-manual"
+        resolved_url: str | None = pdf_url
+    else:
+        if not edition:
+            print("Error: --edition is required when --pdf_url is not provided.")
+            sys.exit(1)
+        rulebook_text = None
+        source = "llm-only"
+        resolved_url = None
 
     print("Compiling wiki sections (6 LLM calls)...")
     sections, failures = compile_game(game_data, rulebook_text, provider)
@@ -105,7 +76,7 @@ if __name__ == "__main__":
     parser.add_argument("--bgg_id", type=int, required=True)
     parser.add_argument("--pdf_url", type=str, default=None)
     parser.add_argument("--edition", type=str, default=None,
-                        help="Edition label (default: BGG publication year)")
+                        help="Edition label (required when --pdf_url is not provided)")
     parser.add_argument("--status", type=str, required=True,
                         choices=["owned", "wishlist", "borrowed", "friend", "played", "archived"])
     parser.add_argument("--wiki_path", type=str, required=True)
