@@ -203,20 +203,220 @@
 </div>
 
 <script>
-  // Language state
-  window.currentLanguage = 'es';
+  const WORKER_URL = ''; // empty = same origin (production via Cloudflare route)
 
+  // ── State ──────────────────────────────────────────────────────────────────
+  let currentLanguage = 'es';
+  let currentMode = 'discovery';
+  let currentGame = null;
+  let currentGameName = null;
+  let history = [];
+  let streaming = false;
+
+  // ── Language toggle ────────────────────────────────────────────────────────
   function setLanguage(lang) {
-    window.currentLanguage = lang;
+    currentLanguage = lang;
     document.getElementById('btn-es').classList.toggle('active', lang === 'es');
     document.getElementById('btn-en').classList.toggle('active', lang === 'en');
   }
 
-  function resetToDiscovery() {
-    // full implementation comes in Task 8
+  // ── Markdown renderer ──────────────────────────────────────────────────────
+  function renderMarkdown(text) {
+    let html = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/((?:<li>[^\n]*\n?)+)/g, '<ul>$1</ul>');
+    html = html.replace(/\n\n+/g, '</p><p>');
+    html = '<p>' + html + '</p>';
+    html = html.replace(/<p>(<[hul])/g, '$1');
+    html = html.replace(/(<\/[hul][^>]*>)<\/p>/g, '$1');
+    html = html.replace(/<p><\/p>/g, '');
+    return html;
   }
 
-  // Placeholder: full JS will be added in Task 8
+  // ── Chat DOM helpers ───────────────────────────────────────────────────────
+  function addMessage(role, htmlContent) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    div.innerHTML = htmlContent;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return div;
+  }
+
+  function addStreamingMessage() {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.innerHTML = '<span class="cursor">▋</span>';
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return div;
+  }
+
+  // ── Load games into selector ───────────────────────────────────────────────
+  async function loadGames() {
+    try {
+      const res = await fetch(`${WORKER_URL}/api/games`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const games = await res.json();
+      const select = document.getElementById('game-select');
+      games.forEach((g) => {
+        const opt = document.createElement('option');
+        opt.value = g.slug;
+        opt.textContent = g.name;
+        select.appendChild(opt);
+      });
+      return games.length;
+    } catch (e) {
+      addMessage('error', 'No se pudo cargar la lista de juegos.');
+      document.getElementById('game-select').disabled = true;
+      return 0;
+    }
+  }
+
+  // ── SSE chat request ───────────────────────────────────────────────────────
+  async function sendMessage(userText) {
+    if (streaming || !userText.trim()) return;
+
+    streaming = true;
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('message-input').disabled = true;
+
+    addMessage('user', userText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+
+    const streamDiv = addStreamingMessage();
+    let fullText = '';
+
+    try {
+      const res = await fetch(`${WORKER_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userText,
+          history,
+          mode: currentMode,
+          game: currentGame,
+          language: currentLanguage,
+        }),
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') {
+            streamDiv.innerHTML = renderMarkdown(fullText);
+            history.push({ role: 'user', content: userText });
+            history.push({ role: 'assistant', content: fullText });
+            break;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) {
+              streamDiv.className = 'message error';
+              streamDiv.innerHTML = parsed.error;
+              break;
+            }
+            if (parsed.token) {
+              fullText += parsed.token;
+              streamDiv.innerHTML = renderMarkdown(fullText) + '<span class="cursor">▋</span>';
+              document.getElementById('chat-container').scrollTop =
+                document.getElementById('chat-container').scrollHeight;
+            }
+          } catch {}
+        }
+      }
+    } catch (e) {
+      streamDiv.className = 'message error';
+      streamDiv.innerHTML = 'Error al conectar con el asistente. Intenta de nuevo.';
+    }
+
+    streaming = false;
+    document.getElementById('send-btn').disabled = false;
+    const input = document.getElementById('message-input');
+    input.disabled = false;
+    input.focus();
+  }
+
+  // ── Game night selection ───────────────────────────────────────────────────
+  document.getElementById('game-select').addEventListener('change', function () {
+    const slug = this.value;
+    if (!slug) return;
+
+    const name = this.options[this.selectedIndex].textContent;
+    currentMode = 'deep_dive';
+    currentGame = slug;
+    currentGameName = name;
+    history = [];
+
+    document.getElementById('mode-bar').textContent = `Modo: ${name}`;
+    document.getElementById('btn-reset-discovery').style.display = 'inline';
+    document.getElementById('chat-container').innerHTML = '';
+
+    const openingEs = `Listo para responder preguntas sobre ${name}. Tengo acceso a las reglas, setup y guía de enseñanza. ¿Qué necesitas saber?`;
+    const openingEn = `Ready to answer questions about ${name}. I have access to the rules, setup, and teaching guide. What do you need to know?`;
+    addMessage('assistant', currentLanguage === 'en' ? openingEn : openingEs);
+  });
+
+  function resetToDiscovery() {
+    currentMode = 'discovery';
+    currentGame = null;
+    currentGameName = null;
+    history = [];
+    document.getElementById('game-select').value = '';
+    document.getElementById('mode-bar').textContent = 'Modo: Descubrimiento de juego';
+    document.getElementById('btn-reset-discovery').style.display = 'none';
+    document.getElementById('chat-container').innerHTML = '';
+    triggerOpeningMessage();
+  }
+
+  // ── Send button and Enter key ──────────────────────────────────────────────
+  document.getElementById('send-btn').addEventListener('click', () => {
+    const input = document.getElementById('message-input');
+    const text = input.value.trim();
+    input.value = '';
+    sendMessage(text);
+  });
+
+  document.getElementById('message-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById('send-btn').click();
+    }
+  });
+
+  // ── Opening message ────────────────────────────────────────────────────────
+  async function triggerOpeningMessage() {
+    const msgEs = `¿Qué tipo de juego estás buscando para esta noche? Dime cuántos jugadores son, cuánto tiempo tienen, o qué mecánicas les gustan.`;
+    const msgEn = `What kind of game are you looking for tonight? Tell me how many players, how much time you have, or what mechanics you enjoy.`;
+    addMessage('assistant', currentLanguage === 'en' ? msgEn : msgEs);
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  (async () => {
+    const count = await loadGames();
+    triggerOpeningMessage();
+  })();
 </script>
 
 </body>
