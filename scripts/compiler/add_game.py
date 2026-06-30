@@ -11,11 +11,45 @@ from compiler.pdf_parser import extract_text
 from compiler.llm_provider import DeepSeekProvider
 from compiler.llm_compiler import compile_game
 from compiler.wiki_writer import write_game
+from compiler.web_searcher import search_rulebook_pdf
+from compiler.bgg_scraper import scrape_bgg_rulebook
+
+
+def acquire_pdf(
+    game_data: dict,
+    pdf_url: str | None,
+    tavily_key: str | None,
+) -> tuple[bytes, str, str | None]:
+    """Return (pdf_bytes, source_label, resolved_url) or raise RuntimeError."""
+    if pdf_url:
+        print(f"Downloading PDF from {pdf_url}...")
+        return fetch_pdf(pdf_url), "pdf-manual", pdf_url
+
+    if tavily_key:
+        print("No PDF URL — searching Tavily...")
+        found_url = search_rulebook_pdf(game_data["name"], tavily_key)
+        if found_url:
+            print(f"Found via web search: {found_url}")
+            return fetch_pdf(found_url), "pdf-web", found_url
+    else:
+        print("TAVILY_API_KEY not set — skipping web search.")
+
+    print(f"Checking BGG Files for {game_data['name']}...")
+    found_url = scrape_bgg_rulebook(game_data["id"])
+    if found_url:
+        print(f"Found in BGG Files: {found_url}")
+        return fetch_pdf(found_url), "pdf-bgg", found_url
+
+    raise RuntimeError(
+        f"Could not find a rulebook PDF for '{game_data['name']}'. "
+        "Provide a --pdf_url argument to proceed."
+    )
 
 
 def main(bgg_id: int, pdf_url: str | None, status: str, wiki_path: str) -> None:
     bgg_token = os.environ.get("GAMECACHE_BGG_TOKEN") or None
     deepseek_key = os.environ["DEEPSEEK_API_KEY"]
+    tavily_key = os.environ.get("TAVILY_API_KEY") or None
 
     provider = DeepSeekProvider(api_key=deepseek_key)
 
@@ -23,17 +57,15 @@ def main(bgg_id: int, pdf_url: str | None, status: str, wiki_path: str) -> None:
     game_data = fetch_game(bgg_id, token=bgg_token)
     print(f"Found: {game_data['name']} ({game_data['slug']})")
 
-    rulebook_text = None
-    source = "ai-generated"
-    if pdf_url:
-        print(f"Downloading PDF from {pdf_url}...")
-        pdf_bytes = fetch_pdf(pdf_url)
-        print("Extracting text from PDF...")
-        rulebook_text = extract_text(pdf_bytes)
-        source = "pdf"
-        print(f"Extracted {len(rulebook_text)} characters from PDF.")
-    else:
-        print("No PDF provided — will use LLM knowledge.")
+    try:
+        pdf_bytes, source, resolved_url = acquire_pdf(game_data, pdf_url, tavily_key)
+    except RuntimeError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print("Extracting text from PDF...")
+    rulebook_text = extract_text(pdf_bytes)
+    print(f"Extracted {len(rulebook_text)} characters from PDF.")
 
     print("Compiling wiki sections (6 LLM calls)...")
     sections, failures = compile_game(game_data, rulebook_text, provider)
@@ -43,25 +75,21 @@ def main(bgg_id: int, pdf_url: str | None, status: str, wiki_path: str) -> None:
         sys.exit(1)
 
     print(f"Writing wiki files to {wiki_path}/games/{game_data['slug']}/...")
-    write_game(game_data, sections, wiki_path, status, source, pdf_url)
+    write_game(game_data, sections, wiki_path, status, source, resolved_url)
 
     print(f"Done! Wiki for '{game_data['name']}' committed to {wiki_path}.")
     if failures:
         print(f"Warning: {len(failures)} section(s) failed: {failures}")
-        print(f"Re-run to retry failed sections: {failures}")
         sys.exit(len(failures))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Import a board game into the wiki")
-    parser.add_argument("--bgg_id", type=int, required=True,
-                        help="BGG game ID (number in the BGG URL)")
-    parser.add_argument("--pdf_url", type=str, default=None,
-                        help="Direct URL to the rulebook PDF (optional)")
+    parser.add_argument("--bgg_id", type=int, required=True)
+    parser.add_argument("--pdf_url", type=str, default=None)
     parser.add_argument("--status", type=str, required=True,
                         choices=["owned", "wishlist", "borrowed", "friend", "played", "archived"])
-    parser.add_argument("--wiki_path", type=str, required=True,
-                        help="Path to the local mybgg-wiki repository")
+    parser.add_argument("--wiki_path", type=str, required=True)
     args = parser.parse_args()
 
     main(
