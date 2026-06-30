@@ -122,23 +122,51 @@ async function handleChat(request, env) {
 
   if (!message) return sseError(request, 'message is required');
 
+  let systemContent;
+
   if (mode === 'discovery') {
     const catalog = (await env.WIKI.get('catalog')) || '[]';
     const systemBase = SYSTEM_PROMPTS.discovery[language] ?? SYSTEM_PROMPTS.discovery.es;
-    const systemContent = `${systemBase}\n\nUser's game catalog (JSON):\n${catalog}`;
-    const messages = [
-      { role: 'system', content: systemContent },
-      ...history,
-      { role: 'user', content: message },
-    ];
-    try {
-      return await streamDeepSeek(messages, env.DEEPSEEK_API_KEY, request);
-    } catch (e) {
-      return sseError(request, e.message);
-    }
+    systemContent = `${systemBase}\n\nUser's game catalog (JSON):\n${catalog}`;
+  } else if (mode === 'deep_dive' && game) {
+    const [index, rules, teaching, faq, glossary] = await Promise.all([
+      env.WIKI.get(`games/${game}/index`),
+      env.WIKI.get(`games/${game}/rules`),
+      env.WIKI.get(`games/${game}/teaching`),
+      env.WIKI.get(`games/${game}/faq`),
+      env.WIKI.get(`games/${game}/glossary`),
+    ]);
+
+    const promptFn = SYSTEM_PROMPTS.deep_dive[language] ?? SYSTEM_PROMPTS.deep_dive.es;
+    const gameName = game.replace(/-/g, ' ');
+    const basePrompt = promptFn(gameName);
+
+    const sections = [
+      index && `## Overview\n${index}`,
+      rules && `## Rules\n${rules}`,
+      teaching && `## Teaching Guide\n${teaching}`,
+      faq && `## FAQ\n${faq}`,
+      glossary && `## Glossary\n${glossary}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    systemContent = `${basePrompt}\n\n${sections}`;
+  } else {
+    return sseError(request, 'Invalid mode. Use "discovery" or "deep_dive" with a game slug.');
   }
 
-  return sseError(request, 'Invalid mode. Use "discovery" or "deep_dive".');
+  const messages = [
+    { role: 'system', content: systemContent },
+    ...history,
+    { role: 'user', content: message },
+  ];
+
+  try {
+    return await streamDeepSeek(messages, env.DEEPSEEK_API_KEY, request);
+  } catch (e) {
+    return sseError(request, e.message);
+  }
 }
 
 export default {
