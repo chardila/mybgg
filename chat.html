@@ -105,6 +105,16 @@
     }
     .message.user code { background: rgba(255,255,255,0.2); }
 
+    .message .table-wrap { overflow-x: auto; margin: 8px 0; }
+    .message table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    .message th, .message td {
+      border: 1px solid #ddd;
+      padding: 6px 10px;
+      text-align: left;
+    }
+    .message th { background: #f0f0f8; font-weight: 600; }
+    .message tr:nth-child(even) td { background: #f9f9f9; }
+
     .cursor { display: inline-block; animation: blink 0.8s step-end infinite; }
     @keyframes blink { 50% { opacity: 0; } }
 
@@ -234,10 +244,29 @@
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
     html = html.replace(/((?:<li>[^\n]*\n?)+)/g, '<ul>$1</ul>');
+    // Tables
+    html = html.replace(
+      /^\|(.*)\|\n\|[-:\s|]+\|\n((?:\|.*\|\n?)*)/gm,
+      function(match, headerRow, bodyRows) {
+        const headers = headerRow.split('|').map(h => h.trim()).filter(h => h !== '');
+        const rows = bodyRows.trim().split('\n').filter(r => r.trim());
+        let t = '<div class="table-wrap"><table><thead><tr>';
+        headers.forEach(h => { t += `<th>${h}</th>`; });
+        t += '</tr></thead><tbody>';
+        rows.forEach(row => {
+          const cells = row.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+          t += '<tr>';
+          cells.forEach(c => { t += `<td>${c}</td>`; });
+          t += '</tr>';
+        });
+        t += '</tbody></table></div>';
+        return t;
+      }
+    );
     html = html.replace(/\n\n+/g, '</p><p>');
     html = '<p>' + html + '</p>';
-    html = html.replace(/<p>(<[hul])/g, '$1');
-    html = html.replace(/(<\/[hul][^>]*>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<[huld])/g, '$1');
+    html = html.replace(/(<\/[huld][^>]*>)<\/p>/g, '$1');
     html = html.replace(/<p><\/p>/g, '');
     return html;
   }
