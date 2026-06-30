@@ -11,6 +11,11 @@ def fetch_game(bgg_id: int, token: str | None = None) -> dict:
     min_p = str(raw.get("min_players", "1"))
     max_p = str(raw.get("max_players", "1"))
     players = f"{min_p}-{max_p}" if min_p != max_p else min_p
+    is_expansion = raw.get("type") == "boardgameexpansion"
+    base_game_id = next(
+        (e["id"] for e in raw.get("expansions", []) if e.get("inbound")),
+        None,
+    )
     return {
         "id": raw["id"],
         "name": raw["name"],
@@ -25,6 +30,8 @@ def fetch_game(bgg_id: int, token: str | None = None) -> dict:
         "rank": str(raw.get("rank", "")),
         "playing_time": str(raw.get("playing_time", "")),
         "yearpublished": int(raw.get("yearpublished", 0) or 0),
+        "is_expansion": is_expansion,
+        "base_game_id": base_game_id,
     }
 
 

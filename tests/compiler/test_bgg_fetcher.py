@@ -78,3 +78,55 @@ def test_fetch_game_yearpublished_defaults_to_zero():
         mock_cls.return_value = mock_client
         result = fetch_game(237182)
     assert result["yearpublished"] == 0
+
+
+BGG_EXPANSION_DATA = {
+    "id": 161936,
+    "type": "boardgameexpansion",
+    "name": "Pandemic: In the Lab",
+    "description": "An expansion.",
+    "mechanics": ["Cooperative Game"],
+    "categories": ["Expansion"],
+    "suggested_numplayers": [],
+    "min_players": "2",
+    "max_players": "4",
+    "weight": "2.5",
+    "rank": "Not Ranked",
+    "playing_time": "45",
+    "usersrated": "5000",
+    "numowned": "10000",
+    "rating": "7.8",
+    "expansions": [{"id": 30549, "inbound": True}],
+    "yearpublished": "2014",
+}
+
+
+def test_fetch_game_base_game_is_not_expansion():
+    with patch("compiler.bgg_fetcher.BGGClient") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.game_list.return_value = [BGG_GAME_DATA]
+        mock_cls.return_value = mock_client
+        result = fetch_game(237182)
+    assert result["is_expansion"] is False
+    assert result["base_game_id"] is None
+
+
+def test_fetch_game_expansion_sets_is_expansion_true():
+    with patch("compiler.bgg_fetcher.BGGClient") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.game_list.return_value = [BGG_EXPANSION_DATA]
+        mock_cls.return_value = mock_client
+        result = fetch_game(161936)
+    assert result["is_expansion"] is True
+    assert result["base_game_id"] == 30549
+
+
+def test_fetch_game_expansion_without_inbound_link_has_no_base_game_id():
+    data = {**BGG_EXPANSION_DATA, "expansions": [{"id": 30549, "inbound": False}]}
+    with patch("compiler.bgg_fetcher.BGGClient") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.game_list.return_value = [data]
+        mock_cls.return_value = mock_client
+        result = fetch_game(161936)
+    assert result["is_expansion"] is True
+    assert result["base_game_id"] is None
