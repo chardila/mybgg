@@ -70,3 +70,28 @@ def test_build_frontmatter_includes_pdf_url():
 def test_build_frontmatter_omits_pdf_url_when_none():
     fm = _build_frontmatter(GAME_DATA, "ai-generated", "ai-generated", None)
     assert "pdf_url" not in fm
+
+
+GAME_DATA_WITH_EDITION = {
+    "id": 237182,
+    "name": "Root",
+    "slug": "root-2018",
+    "edition": "2018",
+    "yearpublished": 2018,
+    "mechanics": ["Area Control"],
+    "players": "2-4",
+    "weight": "3.72",
+    "rank": "21",
+}
+
+
+def test_build_frontmatter_includes_edition():
+    fm = _build_frontmatter(GAME_DATA_WITH_EDITION, "owned", "pdf-manual", None)
+    assert 'edition: "2018"' in fm
+    assert "yearpublished: 2018" in fm
+
+
+def test_build_frontmatter_edition_defaults_when_missing():
+    fm = _build_frontmatter(GAME_DATA, "owned", "pdf-manual", None)
+    assert 'edition: "unknown"' in fm
+    assert "yearpublished: 0" in fm

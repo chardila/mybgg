@@ -38,6 +38,8 @@ def _build_frontmatter(
         f"slug: {game_data['slug']}",
         f"status: {status}",
         f"source: {source}",
+        f'edition: "{game_data.get("edition", "unknown")}"',
+        f"yearpublished: {game_data.get('yearpublished', 0)}",
     ]
     if pdf_url is not None:
         lines.append(f'pdf_url: "{pdf_url}"')
