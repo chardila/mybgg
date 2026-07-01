@@ -1,3 +1,9 @@
+function extractFrontmatterField(content, key) {
+  if (!content) return null;
+  const match = content.match(new RegExp(`^${key}:\\s*"?([^"\\n]+)"?`, 'm'));
+  return match ? match[1].trim() : null;
+}
+
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
   const isAllowed =
@@ -196,7 +202,11 @@ async function handleChat(request, env) {
     ]);
 
     const promptFn = SYSTEM_PROMPTS.deep_dive[language] ?? SYSTEM_PROMPTS.deep_dive.es;
-    const gameName = game.replace(/-/g, ' ');
+    const nameFromFm = extractFrontmatterField(index, 'name');
+    const editionFromFm = extractFrontmatterField(index, 'edition');
+    const gameName = nameFromFm
+      ? (editionFromFm ? `${nameFromFm} (${editionFromFm})` : nameFromFm)
+      : game.replace(/-/g, ' ');
     const basePrompt = promptFn(gameName);
 
     const sections = [

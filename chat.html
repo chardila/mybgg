@@ -302,7 +302,7 @@
       games.forEach((g) => {
         const opt = document.createElement('option');
         opt.value = g.slug;
-        opt.textContent = g.name;
+        opt.textContent = g.edition ? `${g.name} (${g.edition})` : g.name;
         select.appendChild(opt);
       });
       return games.length;
