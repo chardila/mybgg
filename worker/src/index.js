@@ -1,8 +1,4 @@
-function extractFrontmatterField(content, key) {
-  if (!content) return null;
-  const match = content.match(new RegExp(`^${key}:\\s*"?([^"\\n]+)"?`, 'm'));
-  return match ? match[1].trim() : null;
-}
+import { buildDeepDiveContext } from './deepDiveContext.js';
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
@@ -179,7 +175,7 @@ async function handleChat(request, env) {
     return sseError(request, 'Invalid JSON body');
   }
 
-  const { message, history = [], mode = 'discovery', game = null, language = 'es' } = body;
+  const { message, history = [], mode = 'discovery', game = null, expansions = [], language = 'es' } = body;
 
   if (!message) return sseError(request, 'message is required');
 
@@ -193,33 +189,38 @@ async function handleChat(request, env) {
     if (!/^[a-z0-9-]+$/.test(game)) {
       return sseError(request, 'Invalid game slug.');
     }
-    const [index, rules, teaching, faq, glossary] = await Promise.all([
-      env.WIKI.get(`games/${game}/index`),
-      env.WIKI.get(`games/${game}/rules`),
-      env.WIKI.get(`games/${game}/teaching`),
-      env.WIKI.get(`games/${game}/faq`),
-      env.WIKI.get(`games/${game}/glossary`),
-    ]);
+    if (!Array.isArray(expansions) || expansions.length > 10) {
+      return sseError(request, 'Invalid expansions list.');
+    }
+    if (!expansions.every((slug) => /^[a-z0-9-]+$/.test(slug))) {
+      return sseError(request, 'Invalid expansion slug.');
+    }
+
+    const sectionNames = ['index', 'rules', 'teaching', 'faq', 'glossary'];
+    const slugs = [game, ...expansions];
+    const fetched = await Promise.all(
+      slugs.flatMap((slug) =>
+        sectionNames.map((section) => env.WIKI.get(`games/${slug}/${section}`))
+      )
+    );
+    const entries = slugs.map((slug, i) => {
+      const offset = i * sectionNames.length;
+      return {
+        slug,
+        index: fetched[offset],
+        rules: fetched[offset + 1],
+        teaching: fetched[offset + 2],
+        faq: fetched[offset + 3],
+        glossary: fetched[offset + 4],
+      };
+    });
 
     const promptFn = SYSTEM_PROMPTS.deep_dive[language] ?? SYSTEM_PROMPTS.deep_dive.es;
-    const nameFromFm = extractFrontmatterField(index, 'name');
-    const editionFromFm = extractFrontmatterField(index, 'edition');
-    const gameName = nameFromFm
-      ? (editionFromFm ? `${nameFromFm} (${editionFromFm})` : nameFromFm)
-      : game.replace(/-/g, ' ');
-    const basePrompt = promptFn(gameName);
-
-    const sections = [
-      index && `## Overview\n${index}`,
-      rules && `## Rules\n${rules}`,
-      teaching && `## Teaching Guide\n${teaching}`,
-      faq && `## FAQ\n${faq}`,
-      glossary && `## Glossary\n${glossary}`,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-
-    systemContent = `${basePrompt}\n\n${sections}`;
+    systemContent = buildDeepDiveContext({
+      base: entries[0],
+      expansions: entries.slice(1),
+      promptFn,
+    });
   } else {
     return sseError(request, 'Invalid mode. Use "discovery" or "deep_dive" with a game slug.');
   }
