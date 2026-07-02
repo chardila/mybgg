@@ -403,12 +403,22 @@
   }
 
   // ── Game night selection ───────────────────────────────────────────────────
+  function setAwaitingCombo(awaiting) {
+    const input = document.getElementById('message-input');
+    input.disabled = awaiting;
+    document.getElementById('send-btn').disabled = awaiting;
+    input.placeholder = awaiting
+      ? 'Marca las expansiones que quieras y haz clic en "Empezar"...'
+      : 'Escribe una pregunta...';
+  }
+
   function startDeepDive(baseSlug, baseLabel, expansionSlugs, expansionLabels) {
     currentMode = 'deep_dive';
     currentGame = baseSlug;
     currentExpansions = expansionSlugs;
     currentGameName = [baseLabel, ...expansionLabels].join(' + ');
     history = [];
+    setAwaitingCombo(false);
 
     const safeName = currentGameName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     document.getElementById('mode-bar').textContent = `Modo: ${currentGameName}`;
@@ -429,6 +439,7 @@
     if (!slug) {
       checkboxContainer.style.display = 'none';
       startButton.style.display = 'none';
+      setAwaitingCombo(false);
       return;
     }
 
@@ -456,6 +467,7 @@
     });
     checkboxContainer.style.display = 'block';
     startButton.style.display = 'inline';
+    setAwaitingCombo(true);
   });
 
   document.getElementById('btn-start-deepdive').addEventListener('click', function () {
@@ -486,6 +498,7 @@
     document.getElementById('mode-bar').textContent = 'Modo: Descubrimiento de juego';
     document.getElementById('btn-reset-discovery').style.display = 'none';
     document.getElementById('chat-container').innerHTML = '';
+    setAwaitingCombo(false);
     triggerOpeningMessage();
   }
 
