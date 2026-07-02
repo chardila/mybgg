@@ -1,8 +1,4 @@
-function extractFrontmatterField(content, key) {
-  if (!content) return null;
-  const match = content.match(new RegExp(`^${key}:\\s*"?([^"\\n]+)"?`, 'm'));
-  return match ? match[1].trim() : null;
-}
+import { buildDeepDiveContext } from './deepDiveContext.js';
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
@@ -17,19 +13,24 @@ function getCorsHeaders(request) {
 
 const SYSTEM_PROMPTS = {
   discovery: {
-    es: `Eres un asistente experto en juegos de mesa. Ayudas al usuario a elegir un juego para su noche de juegos.
+    es: `Eres un asistente experto en juegos de mesa. Ayudas al usuario a decidir qué jugar en su noche de juegos.
 Tienes acceso al catálogo de juegos del usuario. Responde en español.
+Algunas entradas del catálogo incluyen un campo "expansions" con las expansiones que el usuario posee de ese juego. Tenlas en cuenta activamente: si lo que pide el usuario (más jugadores de los que soporta el juego base, más profundidad estratégica, un tema o mecánica distinta) se resuelve mejor agregando una o varias expansiones específicas, sugiere el juego base junto con esas expansiones por nombre, en vez de limitarte al juego base.
+Haz preguntas concretas cuando ayude a decidir: cuántos jugadores son, cuánto tiempo tienen, si quieren algo más ligero o más desafiante. Usa las respuestas para acotar entre los juegos y expansiones disponibles.
 Preserva la terminología oficial en inglés cuando no hay traducción establecida (ej: "Worker Placement", "Area Control").
-Sé conciso y práctico. Cuando el usuario haya elegido un juego, sugiere que lo seleccione para obtener ayuda detallada.
+Sé conciso y práctico. Cuando el usuario haya decidido qué jugar, dile que seleccione el juego base en el desplegable y marque las expansiones elegidas (si el juego tiene expansiones) para obtener ayuda detallada durante la partida.
 IMPORTANTE: Solo responde preguntas relacionadas con juegos de mesa. Si el usuario pregunta sobre cualquier otro tema, responde amablemente que solo puedes ayudar con juegos de mesa y redirige la conversación.`,
-    en: `You are a board game expert assistant. You help the user choose a game for their game night.
+    en: `You are a board game expert assistant. You help the user decide what to play for their game night.
 You have access to the user's game catalog. Respond in English.
-Be concise and practical. When the user has chosen a game, suggest they select it for detailed help.
+Some catalog entries include an "expansions" field listing the expansions the user owns for that game. Take them into account actively: if what the user wants (more players than the base game supports, more strategic depth, a different theme or mechanic) is better solved by adding one or more specific expansions, suggest the base game together with those expansions by name, rather than only ever recommending the bare base game.
+Ask concrete questions when it helps decide: how many players, how much time they have, whether they want something lighter or more challenging. Use the answers to narrow down the available games and expansions.
+Be concise and practical. Once the user has decided what to play, tell them to select the base game from the dropdown and check the expansions they chose (if the game has any) to get detailed in-game help.
 IMPORTANT: Only answer questions related to board games. If the user asks about any other topic, kindly let them know you can only help with board games and redirect the conversation.`,
   },
   deep_dive: {
     es: (gameName) =>
       `Eres un experto en ${gameName}. Tienes acceso al wiki completo del juego incluyendo reglas, setup, guía de enseñanza, FAQ y glosario.
+El contexto puede incluir el juego base junto con una o más expansiones que el usuario seleccionó. Cada sección de expansión describe solo lo que esa expansión agrega o modifica respecto al juego base, y no repite sus reglas — si la pregunta requiere combinar ambas, hazlo explícitamente y aclara qué parte viene del juego base y cuál de la expansión.
 Responde en español. Preserva los nombres oficiales de componentes y mecánicas en inglés cuando no hay traducción establecida.
 IMPORTANTE: Solo responde preguntas sobre ${gameName} y juegos de mesa en general. Si el usuario pregunta sobre cualquier otro tema, responde amablemente que solo puedes ayudar con preguntas sobre este juego y redirige la conversación.
 FUENTE: Siempre indica de dónde viene tu respuesta:
@@ -38,6 +39,7 @@ FUENTE: Siempre indica de dónde viene tu respuesta:
 - Si la respuesta combina ambas fuentes, usa "📖 Del wiki:" y "🧠 Conocimiento general:" para separar cada parte.`,
     en: (gameName) =>
       `You are an expert on ${gameName}. You have access to the complete game wiki including rules, setup, teaching guide, FAQ, and glossary.
+The context may include the base game together with one or more expansions the user selected. Each expansion section describes only what that expansion adds or changes relative to the base game, and does not repeat its rules — if the question requires combining both, do so explicitly and make clear which part comes from the base game and which from the expansion.
 Respond in English. Be precise about rules.
 IMPORTANT: Only answer questions about ${gameName} and board games in general. If the user asks about any other topic, kindly let them know you can only help with questions about this game and redirect the conversation.
 SOURCE: Always indicate where your answer comes from:
@@ -179,7 +181,7 @@ async function handleChat(request, env) {
     return sseError(request, 'Invalid JSON body');
   }
 
-  const { message, history = [], mode = 'discovery', game = null, language = 'es' } = body;
+  const { message, history = [], mode = 'discovery', game = null, expansions = [], language = 'es' } = body;
 
   if (!message) return sseError(request, 'message is required');
 
@@ -193,33 +195,38 @@ async function handleChat(request, env) {
     if (!/^[a-z0-9-]+$/.test(game)) {
       return sseError(request, 'Invalid game slug.');
     }
-    const [index, rules, teaching, faq, glossary] = await Promise.all([
-      env.WIKI.get(`games/${game}/index`),
-      env.WIKI.get(`games/${game}/rules`),
-      env.WIKI.get(`games/${game}/teaching`),
-      env.WIKI.get(`games/${game}/faq`),
-      env.WIKI.get(`games/${game}/glossary`),
-    ]);
+    if (!Array.isArray(expansions) || expansions.length > 10) {
+      return sseError(request, 'Invalid expansions list.');
+    }
+    if (!expansions.every((slug) => /^[a-z0-9-]+$/.test(slug))) {
+      return sseError(request, 'Invalid expansion slug.');
+    }
+
+    const sectionNames = ['index', 'rules', 'teaching', 'faq', 'glossary'];
+    const slugs = [game, ...expansions];
+    const fetched = await Promise.all(
+      slugs.flatMap((slug) =>
+        sectionNames.map((section) => env.WIKI.get(`games/${slug}/${section}`))
+      )
+    );
+    const entries = slugs.map((slug, i) => {
+      const offset = i * sectionNames.length;
+      return {
+        slug,
+        index: fetched[offset],
+        rules: fetched[offset + 1],
+        teaching: fetched[offset + 2],
+        faq: fetched[offset + 3],
+        glossary: fetched[offset + 4],
+      };
+    });
 
     const promptFn = SYSTEM_PROMPTS.deep_dive[language] ?? SYSTEM_PROMPTS.deep_dive.es;
-    const nameFromFm = extractFrontmatterField(index, 'name');
-    const editionFromFm = extractFrontmatterField(index, 'edition');
-    const gameName = nameFromFm
-      ? (editionFromFm ? `${nameFromFm} (${editionFromFm})` : nameFromFm)
-      : game.replace(/-/g, ' ');
-    const basePrompt = promptFn(gameName);
-
-    const sections = [
-      index && `## Overview\n${index}`,
-      rules && `## Rules\n${rules}`,
-      teaching && `## Teaching Guide\n${teaching}`,
-      faq && `## FAQ\n${faq}`,
-      glossary && `## Glossary\n${glossary}`,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-
-    systemContent = `${basePrompt}\n\n${sections}`;
+    systemContent = buildDeepDiveContext({
+      base: entries[0],
+      expansions: entries.slice(1),
+      promptFn,
+    });
   } else {
     return sseError(request, 'Invalid mode. Use "discovery" or "deep_dive" with a game slug.');
   }

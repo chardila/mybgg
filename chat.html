@@ -198,6 +198,8 @@
   <select id="game-select">
     <option value="">Seleccionar juego</option>
   </select>
+  <div id="expansion-checkboxes" style="display:none"></div>
+  <button id="btn-start-deepdive" style="display:none">Empezar</button>
   <button id="btn-reset-discovery" style="display:none" onclick="resetToDiscovery()">
     Volver a descubrimiento
   </button>
@@ -220,6 +222,8 @@
   let currentMode = 'discovery';
   let currentGame = null;
   let currentGameName = null;
+  let currentExpansions = [];
+  let allGames = [];
   let history = [];
   let streaming = false;
 
@@ -293,18 +297,25 @@
   }
 
   // ── Load games into selector ───────────────────────────────────────────────
+  function gameLabel(g) {
+    return g.edition ? `${g.name} (${g.edition})` : g.name;
+  }
+
   async function loadGames() {
     try {
       const res = await fetch(`${WORKER_URL}/api/games`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const games = await res.json();
+      allGames = games;
       const select = document.getElementById('game-select');
-      games.forEach((g) => {
-        const opt = document.createElement('option');
-        opt.value = g.slug;
-        opt.textContent = g.edition ? `${g.name} (${g.edition})` : g.name;
-        select.appendChild(opt);
-      });
+      games
+        .filter((g) => !g.base_game_slug)
+        .forEach((g) => {
+          const opt = document.createElement('option');
+          opt.value = g.slug;
+          opt.textContent = gameLabel(g);
+          select.appendChild(opt);
+        });
       return games.length;
     } catch (e) {
       addMessage('error', 'No se pudo cargar la lista de juegos.');
@@ -335,6 +346,7 @@
           history,
           mode: currentMode,
           game: currentGame,
+          expansions: currentExpansions,
           language: currentLanguage,
         }),
       });
@@ -391,32 +403,86 @@
   }
 
   // ── Game night selection ───────────────────────────────────────────────────
-  document.getElementById('game-select').addEventListener('change', function () {
-    const slug = this.value;
-    if (!slug) return;
-
-    const name = this.options[this.selectedIndex].textContent;
-    const safeName = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function startDeepDive(baseSlug, baseLabel, expansionSlugs, expansionLabels) {
     currentMode = 'deep_dive';
-    currentGame = slug;
-    currentGameName = name;
+    currentGame = baseSlug;
+    currentExpansions = expansionSlugs;
+    currentGameName = [baseLabel, ...expansionLabels].join(' + ');
     history = [];
 
-    document.getElementById('mode-bar').textContent = `Modo: ${name}`;
+    const safeName = currentGameName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    document.getElementById('mode-bar').textContent = `Modo: ${currentGameName}`;
     document.getElementById('btn-reset-discovery').style.display = 'inline';
     document.getElementById('chat-container').innerHTML = '';
 
     const openingEs = `Listo para responder preguntas sobre ${safeName}. Tengo acceso a las reglas, setup y guía de enseñanza. ¿Qué necesitas saber?`;
     const openingEn = `Ready to answer questions about ${safeName}. I have access to the rules, setup, and teaching guide. What do you need to know?`;
     addMessage('assistant', currentLanguage === 'en' ? openingEn : openingEs);
+  }
+
+  document.getElementById('game-select').addEventListener('change', function () {
+    const slug = this.value;
+    const checkboxContainer = document.getElementById('expansion-checkboxes');
+    const startButton = document.getElementById('btn-start-deepdive');
+    checkboxContainer.innerHTML = '';
+
+    if (!slug) {
+      checkboxContainer.style.display = 'none';
+      startButton.style.display = 'none';
+      return;
+    }
+
+    const game = allGames.find((g) => g.slug === slug);
+    const label = this.options[this.selectedIndex].textContent;
+    const expansions = (game && game.expansions) || [];
+
+    if (expansions.length === 0) {
+      checkboxContainer.style.display = 'none';
+      startButton.style.display = 'none';
+      startDeepDive(slug, label, [], []);
+      return;
+    }
+
+    expansions.forEach((exp) => {
+      const wrapper = document.createElement('label');
+      wrapper.className = 'expansion-checkbox';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.value = exp.slug;
+      input.dataset.label = gameLabel(exp);
+      wrapper.appendChild(input);
+      wrapper.appendChild(document.createTextNode(' ' + gameLabel(exp)));
+      checkboxContainer.appendChild(wrapper);
+    });
+    checkboxContainer.style.display = 'block';
+    startButton.style.display = 'inline';
+  });
+
+  document.getElementById('btn-start-deepdive').addEventListener('click', function () {
+    const select = document.getElementById('game-select');
+    const slug = select.value;
+    if (!slug) return;
+    const label = select.options[select.selectedIndex].textContent;
+
+    const checked = Array.from(
+      document.querySelectorAll('#expansion-checkboxes input[type="checkbox"]:checked')
+    );
+    const expansionSlugs = checked.map((c) => c.value);
+    const expansionLabels = checked.map((c) => c.dataset.label);
+
+    startDeepDive(slug, label, expansionSlugs, expansionLabels);
   });
 
   function resetToDiscovery() {
     currentMode = 'discovery';
     currentGame = null;
     currentGameName = null;
+    currentExpansions = [];
     history = [];
     document.getElementById('game-select').value = '';
+    document.getElementById('expansion-checkboxes').innerHTML = '';
+    document.getElementById('expansion-checkboxes').style.display = 'none';
+    document.getElementById('btn-start-deepdive').style.display = 'none';
     document.getElementById('mode-bar').textContent = 'Modo: Descubrimiento de juego';
     document.getElementById('btn-reset-discovery').style.display = 'none';
     document.getElementById('chat-container').innerHTML = '';
