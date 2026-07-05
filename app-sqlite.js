@@ -1526,7 +1526,7 @@ function renderGameCard(game) {
   // Set description
   const teaserText = clone.querySelector('.teaser-text');
   teaserText.setAttribute('data-full-text', escapeHtml(game.description || ''));
-  teaserText.innerHTML = game.description ? getTeaserText(game.description, true) : 'No description available.';
+  teaserText.innerHTML = game.description ? getTeaserText(escapeHtml(game.description), true) : 'No description available.';
 
   // Set mechanic chips
   const mechanicContainer = clone.querySelector('.mechanic-chips-container');
