@@ -1,17 +1,19 @@
 """
 BGG Token Setup Script
 
-This script automatically generates a BGG (BoardGameGeek) API token for GameCache.
-It uses a private Cloudflare Worker to generate tokens on behalf of users.
+BGG's XML API v2 requires an `Authorization: Bearer <token>` header on every
+request. This script walks you through generating that token manually on
+BGG's site, validates it against the real API, and saves it locally.
 """
 
 import sys
-import json
 from pathlib import Path
 
 # Import our own HTTP client
-from gamecache.http_client import make_json_request
+from gamecache.http_client import make_http_request
 from gamecache.config import parse_config_file
+
+BGG_TOKEN_PAGE_URL = "https://boardgamegeek.com/application/189/tokens"
 
 
 def get_bgg_username_from_config(config_path="config.ini"):
@@ -28,7 +30,7 @@ def get_bgg_username_from_config(config_path="config.ini"):
     print("🎮 BGG TOKEN GENERATOR")
     print("="*70)
     print()
-    print("This script will automatically generate a BGG API token for you.")
+    print("This script walks you through generating a BGG API token and saves it locally.")
     print()
 
     try:
@@ -53,48 +55,58 @@ def get_bgg_username_from_config(config_path="config.ini"):
         return None
 
 
-def generate_token_via_worker(username):
+def prompt_for_token(username):
     """
-    Generate a BGG token by calling the Cloudflare Worker.
+    Ask the user to generate a BGG token manually and paste it in.
 
     Args:
-        username: The BGG username for token naming
+        username: The BGG username, shown so the user confirms they're
+            logged in as the right account before generating the token
 
     Returns:
-        The generated token, or None if failed
+        The token string the user pasted, or None if left empty
     """
-    worker_url = 'https://gamecache-bgg-token-generator.mybgg.workers.dev'
+    print(f"\n1. Log in to BoardGameGeek as '{username}' in your browser.")
+    print(f"2. Open: {BGG_TOKEN_PAGE_URL}")
+    print(f"3. Generate a new application token.\n")
 
-    print(f"\n🔄 Generating token for user '{username}'...")
+    token = input("Paste your BGG token here: ").strip()
+    if not token:
+        print("\n❌ No token entered.")
+        return None
+    return token
 
+
+def validate_token(token, username):
+    """
+    Confirm BGG actually accepts this token before saving it.
+
+    Args:
+        token: The token to validate
+        username: The BGG username to test the collection endpoint against
+
+    Returns:
+        True if BGG accepted the token (or validation was inconclusive),
+        False if BGG explicitly rejected it (401)
+    """
+    print("\n🔎 Validating token against BGG...")
     try:
-        data = make_json_request(
-            worker_url,
-            method='POST',
-            data={'username': username},
-            timeout=30
+        make_http_request(
+            "https://www.boardgamegeek.com/xmlapi2/collection",
+            params={"username": username, "version": 1},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
         )
-
-        if data and data.get('success') and data.get('token'):
-            print(f"✅ Token generated successfully!")
-            return data['token']
-        elif data:
-            print(f"❌ Unexpected response from token generator:")
-            print(f"   {data}")
-            return None
-        else:
-            print(f"❌ Token generation failed - no response data")
-            return None
-
+        print("✅ Token accepted by BGG.")
+        return True
     except Exception as e:
         error_msg = str(e)
-        if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
-            print("❌ Request timed out. Please check your internet connection.")
-        elif 'connection' in error_msg.lower():
-            print("❌ Connection error. Please check your internet connection.")
-        else:
-            print(f"❌ Error generating token: {e}")
-        return None
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            print("❌ BGG rejected this token (401 Unauthorized).")
+            print("   Double-check you copied the full token and are logged in as the right user.")
+            return False
+        print(f"⚠️  Could not validate token online ({e}). Saving it anyway.")
+        return True
 
 
 def save_token_to_config(token, config_path="config.ini"):
@@ -148,12 +160,12 @@ def main():
     if not username:
         sys.exit(1)
 
-    # Generate token
-    token = generate_token_via_worker(username)
+    # Get token (manual generation on BGG's site)
+    token = prompt_for_token(username)
     if not token:
-        print("\n❌ Failed to generate token.")
-        print("\nIf the automatic token generation isn't working, you can create")
-        print("a token manually at: https://boardgamegeek.com/application/189/tokens")
+        sys.exit(1)
+
+    if not validate_token(token, username):
         sys.exit(1)
 
     # Save to config

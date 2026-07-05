@@ -57,13 +57,20 @@ pip install -r scripts/requirements.txt
 #### Environment Variables (BGG Token)
 You need a BoardGameGeek API token to download data. We use a `.env` file to store this securely.
 
-1.  Run the token setup script:
+1.  Log in to BoardGameGeek and generate a token at:
+    [boardgamegeek.com/application/189/tokens](https://boardgamegeek.com/application/189/tokens)
+2.  Run the token setup script and paste the token when prompted:
     ```bash
     python scripts/setup_bgg_token.py
     ```
-2.  Follow the prompts. This will automatically generate a token and save it to a `.env` file in your project root.
+    This validates the token against BGG's API and saves it to a `.env` file in your project root.
     *   **Note**: The `.env` file contains secrets and is Git-ignored. Do not commit it.
     *   Content format: `GAMECACHE_BGG_TOKEN=your_secret_token`
+    *   **Token generation is manual.** An earlier version of this script called a Cloudflare Worker
+        (`gamecache-bgg-token-generator.mybgg.workers.dev`) to generate the token automatically. That
+        worker returns a fake success response with a random token BGG never issued (confirmed: BGG
+        rejects it with 401 Unauthorized), and it isn't part of this repo or account, so it can't be
+        fixed here. Generating the token manually on BGG's site is the only reliable path.
 
 #### Config File
 Update `config.ini` with your details (this file is committed to Git):
