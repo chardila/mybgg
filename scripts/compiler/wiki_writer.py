@@ -18,7 +18,14 @@ def write_game(
 
     frontmatter = _build_frontmatter(game_data, status, source, pdf_url)
     index_content = sections.get("index", "")
-    (game_dir / "index.md").write_text(f"{frontmatter}\n{warning}{index_content}")
+    new_index = f"{frontmatter}\n{warning}{index_content}"
+
+    index_path = game_dir / "index.md"
+    if index_path.exists():
+        existing_expansions = _extract_expansions_section(index_path.read_text())
+        if existing_expansions and "## Expansions" not in new_index:
+            new_index = new_index.rstrip() + f"\n\n{existing_expansions}\n"
+    index_path.write_text(new_index)
 
     for section in ["setup", "rules", "teaching", "faq", "glossary"]:
         if section in sections:
@@ -46,6 +53,14 @@ def _llm_only_warning(edition: str) -> str:
         "> Contenido generado desde conocimiento general del LLM sin rulebook verificado.\n"
         f"> Edición de referencia: **{edition}**. Puede diferir de otras ediciones.\n\n"
     )
+
+
+def _extract_expansions_section(content: str) -> str | None:
+    marker = "## Expansions"
+    idx = content.find(marker)
+    if idx == -1:
+        return None
+    return content[idx:].rstrip()
 
 
 def _update_base_game_expansions(

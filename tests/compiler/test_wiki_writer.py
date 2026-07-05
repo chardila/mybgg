@@ -228,6 +228,23 @@ def test_write_game_base_game_does_not_call_update(tmp_path):
     mock_update.assert_not_called()
 
 
+def test_write_game_preserves_existing_expansions_section_on_reimport(tmp_path):
+    game_dir = tmp_path / "games" / "root"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text(
+        "---\nbgg_id: 237182\n---\n\n# Root\n\n## Expansions\n\n"
+        "- [[root-riverfolk-expansion]] — The Riverfolk Expansion\n"
+    )
+
+    with patch("compiler.wiki_writer._git_commit_and_push"):
+        write_game(GAME_DATA, SECTIONS, str(tmp_path), "owned", "pdf")
+
+    content = (game_dir / "index.md").read_text()
+    assert "## Expansions" in content
+    assert "[[root-riverfolk-expansion]]" in content
+    assert content.count("## Expansions") == 1
+
+
 def test_build_frontmatter_does_not_crash_when_expansion_has_no_inbound_link():
     game_data = {
         "id": 161936, "name": "Pandemic: In the Lab",
