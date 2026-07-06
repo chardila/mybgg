@@ -1,4 +1,5 @@
 import { buildDeepDiveContext } from './deepDiveContext.js';
+import { checkRateLimit } from './rateLimiter.js';
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
@@ -49,10 +50,10 @@ SOURCE: Always indicate where your answer comes from:
   },
 };
 
-function sseError(request, message) {
+function sseError(request, message, status = 200) {
   return new Response(
     `data: ${JSON.stringify({ error: message })}\n\ndata: [DONE]\n\n`,
-    { headers: { ...getCorsHeaders(request), 'Content-Type': 'text/event-stream' } }
+    { status, headers: { ...getCorsHeaders(request), 'Content-Type': 'text/event-stream' } }
   );
 }
 
@@ -184,6 +185,15 @@ async function handleChat(request, env) {
   const { message, history = [], mode = 'discovery', game = null, expansions = [], language = 'es' } = body;
 
   if (!message) return sseError(request, 'message is required');
+
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const { allowed } = await checkRateLimit({ store: env.WIKI, ip });
+  if (!allowed) {
+    const rateLimitMessage = language === 'en'
+      ? 'Too many requests. Please wait a minute and try again.'
+      : 'Demasiadas solicitudes. Espera un minuto e intenta de nuevo.';
+    return sseError(request, rateLimitMessage, 429);
+  }
 
   let systemContent;
 
