@@ -55,6 +55,9 @@ const dsmlLeakSSE = () =>
     JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
   ]);
 
+const incompleteStreamSSE = () =>
+  fakeSSEResponse([JSON.stringify({ choices: [{ index: 0, delta: { content: 'Ho' } }] })]);
+
 const env = { DEEPSEEK_API_KEY: 'key123', GEMINI_API_KEY: 'test-gemini-key', BGG_TOKEN: 'bgg-token' };
 
 describe('runChatCompletion', () => {
@@ -248,6 +251,55 @@ describe('runChatCompletion', () => {
     const text = await readAllText(response);
 
     expect(text).toContain('I ran into a problem');
+  });
+
+  it('retries round 1 once and uses the clean retry when the stream is cut short with no finish_reason', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(incompleteStreamSSE())
+      .mockResolvedValueOnce(noToolCallSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(text).toContain('data: {"token":"Hola"}');
+  });
+
+  it('falls back to a friendly message when round 1 is cut short on both attempts', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(incompleteStreamSSE())
+      .mockResolvedValueOnce(incompleteStreamSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest(), 'es');
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(text).toContain('Tuve un problema');
+  });
+
+  it('retries round 2 once and uses the clean retry when the stream is cut short with no finish_reason', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(incompleteStreamSSE())
+      .mockResolvedValueOnce(
+        fakeSSEResponse([
+          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        ])
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(text).toContain('data: {"token":"Encontré Wingspan."}');
   });
 
 });

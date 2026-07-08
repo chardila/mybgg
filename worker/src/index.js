@@ -236,23 +236,31 @@ function looksLikeLeakedToolCall(text) {
   return text.includes('DSML');
 }
 
+// A finishReason of null means the upstream stream ended without ever
+// sending a finish_reason chunk — the connection was cut mid-generation
+// (observed in production: e.g. a 3-token response after Gemini returned
+// intermittent 503s). Distinct from finish_reason: "length" (a real token
+// cap), which a retry would just reproduce.
+function isIncompleteStream(result) {
+  return result.finishReason === null;
+}
+
 function fallbackMessage(language) {
   return language === 'en'
     ? 'I ran into a problem answering that. Could you rephrase your question?'
     : 'Tuve un problema respondiendo eso. ¿Podés reformular la pregunta?';
 }
 
-// DeepSeek's tool-calling occasionally leaks its internal DSML markup as plain
-// content (finish_reason: "stop") instead of populating tool_calls. It's
-// non-deterministic upstream, so a single retry is the cheap fix; returns
-// null if it leaks twice in a row, so the caller can fall back. Round 1 no
-// longer uses DeepSeek (see callGemini), so this only guards round 2.
-async function bufferedRoundWithLeakRetry(messages, callFn) {
-  let result = await attemptBufferedRound(messages, callFn, 'round 2');
-  if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
-    result = await attemptBufferedRound(messages, callFn, 'round 2 retry');
-    if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
-      console.error('DeepSeek leaked DSML tool-call markup twice in a row, falling back');
+// Retries once when shouldRetry(result) is true, then falls back (returns
+// null) if the retry also matches. Used for two distinct failure modes:
+// - round 1 (Gemini): stream cut short mid-generation (isIncompleteStream)
+// - round 2 (DeepSeek): the DSML leak bug, plus the same incomplete-stream risk
+async function attemptBufferedRoundWithRetry(messages, callFn, roundLabel, shouldRetry) {
+  let result = await attemptBufferedRound(messages, callFn, roundLabel);
+  if (shouldRetry(result)) {
+    result = await attemptBufferedRound(messages, callFn, `${roundLabel} retry`);
+    if (shouldRetry(result)) {
+      console.error(`${roundLabel} failed twice in a row, falling back`);
       return null;
     }
   }
@@ -262,13 +270,18 @@ async function bufferedRoundWithLeakRetry(messages, callFn) {
 async function runChatCompletion(messages, env, request, language = 'es') {
   let firstResult;
   try {
-    firstResult = await attemptBufferedRound(
+    firstResult = await attemptBufferedRoundWithRetry(
       messages,
       (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
-      'round 1'
+      'round 1',
+      isIncompleteStream
     );
   } catch (e) {
     return sseError(request, e.message);
+  }
+
+  if (firstResult === null) {
+    return replayBufferedAsSSE([fallbackMessage(language)], request);
   }
 
   if (firstResult.finishReason !== 'tool_calls' || firstResult.toolCalls.length === 0) {
@@ -313,9 +326,11 @@ async function runChatCompletion(messages, env, request, language = 'es') {
 
   let secondResult;
   try {
-    secondResult = await bufferedRoundWithLeakRetry(
+    secondResult = await attemptBufferedRoundWithRetry(
       followUp,
-      (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY)
+      (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
+      'round 2',
+      (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))
     );
   } catch (e) {
     return sseError(request, e.message);
