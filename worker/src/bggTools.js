@@ -146,6 +146,46 @@ async function getGameDetails({ bgg_id }, token) {
   };
 }
 
+async function searchForum({ bgg_id, query }, token) {
+  const listData = await bggFetch('/forumlist', { id: bgg_id, type: 'thing' }, token);
+  const forums = asArray(listData.forumlist?.forum);
+
+  const perForumResults = await Promise.all(
+    forums.map(async (forum) => {
+      const forumData = await bggFetch('/forum', { id: forum['@_id'] }, token);
+      const threads = asArray(forumData.forum?.threads?.thread);
+      return threads.map((thread) => ({
+        id: Number(thread['@_id']),
+        subject: thread['@_subject'],
+        author: thread['@_author'],
+        forum: forum['@_title'],
+      }));
+    })
+  );
+
+  const term = query.toLowerCase();
+  return perForumResults
+    .flat()
+    .filter((thread) => thread.subject?.toLowerCase().includes(term))
+    .slice(0, 10);
+}
+
+async function getThread({ thread_id }, token) {
+  const data = await bggFetch('/thread', { id: thread_id }, token);
+  const thread = data.thread;
+  if (!thread || !thread.subject) throw new Error(`Thread ${thread_id} not found`);
+  const articles = asArray(thread.articles?.article);
+  return {
+    id: Number(thread['@_id']),
+    subject: thread.subject,
+    posts: articles.map((article) => ({
+      author: article['@_username'],
+      date: article['@_postdate'],
+      text: typeof article.body === 'string' ? article.body : '',
+    })),
+  };
+}
+
 export async function executeBggTool(name, args, token) {
   try {
     switch (name) {
@@ -153,6 +193,10 @@ export async function executeBggTool(name, args, token) {
         return { result: await searchGame(args, token) };
       case 'bgg_get_game_details':
         return { result: await getGameDetails(args, token) };
+      case 'bgg_search_forum':
+        return { result: await searchForum(args, token) };
+      case 'bgg_get_thread':
+        return { result: await getThread(args, token) };
       default:
         return { error: `Unknown tool: ${name}` };
     }

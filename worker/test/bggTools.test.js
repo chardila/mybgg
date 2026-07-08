@@ -104,6 +104,112 @@ describe('executeBggTool: bgg_get_game_details', () => {
   });
 });
 
+describe('executeBggTool: bgg_search_forum', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns threads whose subject matches the query, across all forums', async () => {
+    const forumlistXml = `<?xml version="1.0"?>
+      <forumlist type="thing" id="266192" termsofuse="x">
+        <forum id="1" title="Rules" noposting="0" description="d" numthreads="1" numposts="1" lastpostdate="d"/>
+        <forum id="2" title="General" noposting="0" description="d" numthreads="1" numposts="1" lastpostdate="d"/>
+      </forumlist>`;
+    const rulesForumXml = `<?xml version="1.0"?>
+      <forum id="1" title="Rules" numthreads="1" numposts="1" termsofuse="x">
+        <threads>
+          <thread id="1000" subject="Unofficial solo variant" author="user1" numarticles="2" postdate="d" lastpostdate="d"/>
+        </threads>
+      </forum>`;
+    const generalForumXml = `<?xml version="1.0"?>
+      <forum id="2" title="General" numthreads="1" numposts="1" termsofuse="x">
+        <threads>
+          <thread id="1001" subject="Best insert for the box" author="user2" numarticles="3" postdate="d" lastpostdate="d"/>
+        </threads>
+      </forum>`;
+
+    const mockFetch = vi.fn((url) => {
+      const text = url.includes('/forumlist')
+        ? forumlistXml
+        : url.includes('id=1')
+        ? rulesForumXml
+        : generalForumXml;
+      return Promise.resolve(fakeXmlResponse(text));
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { result, error } = await executeBggTool(
+      'bgg_search_forum',
+      { bgg_id: 266192, query: 'solo' },
+      'tok123'
+    );
+
+    expect(error).toBeUndefined();
+    expect(result).toEqual([{ id: 1000, subject: 'Unofficial solo variant', author: 'user1', forum: 'Rules' }]);
+  });
+
+  it('returns an empty array when nothing matches', async () => {
+    const forumlistXml = `<?xml version="1.0"?>
+      <forumlist type="thing" id="266192" termsofuse="x">
+        <forum id="1" title="Rules" noposting="0" description="d" numthreads="0" numposts="0" lastpostdate="d"/>
+      </forumlist>`;
+    const rulesForumXml = `<?xml version="1.0"?>
+      <forum id="1" title="Rules" numthreads="0" numposts="0" termsofuse="x"><threads></threads></forum>`;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url) =>
+        Promise.resolve(fakeXmlResponse(url.includes('/forumlist') ? forumlistXml : rulesForumXml))
+      )
+    );
+
+    const { result } = await executeBggTool('bgg_search_forum', { bgg_id: 266192, query: 'zzz' }, 'tok123');
+    expect(result).toEqual([]);
+  });
+});
+
+describe('executeBggTool: bgg_get_thread', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns the thread subject and each post', async () => {
+    const xml = `<?xml version="1.0"?>
+      <thread id="1000" numarticles="2">
+        <subject>Unofficial solo variant</subject>
+        <link>https://boardgamegeek.com/thread/1000</link>
+        <articles>
+          <article id="1" username="user1" link="l" postdate="2026-01-01" editdate="2026-01-01" numedits="0">
+            <subject>Unofficial solo variant</subject>
+            <body><![CDATA[Has anyone tried a solo mode?]]></body>
+          </article>
+          <article id="2" username="user3" link="l" postdate="2026-01-02" editdate="2026-01-02" numedits="0">
+            <subject>Re: Unofficial solo variant</subject>
+            <body><![CDATA[Check the Files section.]]></body>
+          </article>
+        </articles>
+      </thread>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result, error } = await executeBggTool('bgg_get_thread', { thread_id: 1000 }, 'tok123');
+
+    expect(error).toBeUndefined();
+    expect(result).toEqual({
+      id: 1000,
+      subject: 'Unofficial solo variant',
+      posts: [
+        { author: 'user1', date: '2026-01-01', text: 'Has anyone tried a solo mode?' },
+        { author: 'user3', date: '2026-01-02', text: 'Check the Files section.' },
+      ],
+    });
+  });
+
+  it('returns an error when the thread does not exist', async () => {
+    const xml = `<?xml version="1.0"?><error><message>Thread not found</message></error>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result, error } = await executeBggTool('bgg_get_thread', { thread_id: 999999999 }, 'tok123');
+    expect(result).toBeUndefined();
+    expect(error).toBe('Thread 999999999 not found');
+  });
+});
+
 describe('executeBggTool: errors and unknown tools', () => {
   afterEach(() => vi.unstubAllGlobals());
 
