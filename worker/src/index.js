@@ -82,7 +82,8 @@ async function callDeepSeek(messages, apiKey, { tools } = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(`DeepSeek API error: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`DeepSeek API error: ${response.status} — ${body}`);
   }
 
   return response;
@@ -101,7 +102,10 @@ async function callGemini(messages, apiKey, { tools } = {}) {
     }
   );
 
-  if (!response.ok) throw new Error(`Gemini API error: ${response.status}`);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Gemini API error: ${response.status} — ${body}`);
+  }
   return response;
 }
 
@@ -220,7 +224,34 @@ async function attemptBufferedRound(messages, callFn) {
   return { ...result, bufferedTokens };
 }
 
-async function runChatCompletion(messages, env, request) {
+function looksLikeLeakedToolCall(text) {
+  return text.includes('DSML');
+}
+
+function fallbackMessage(language) {
+  return language === 'en'
+    ? 'I ran into a problem answering that. Could you rephrase your question?'
+    : 'Tuve un problema respondiendo eso. ¿Podés reformular la pregunta?';
+}
+
+// DeepSeek's tool-calling occasionally leaks its internal DSML markup as plain
+// content (finish_reason: "stop") instead of populating tool_calls. It's
+// non-deterministic upstream, so a single retry is the cheap fix; returns
+// null if it leaks twice in a row, so the caller can fall back. Round 1 no
+// longer uses DeepSeek (see callGemini), so this only guards round 2.
+async function bufferedRoundWithLeakRetry(messages, callFn) {
+  let result = await attemptBufferedRound(messages, callFn);
+  if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
+    result = await attemptBufferedRound(messages, callFn);
+    if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
+      console.error('DeepSeek leaked DSML tool-call markup twice in a row, falling back');
+      return null;
+    }
+  }
+  return result;
+}
+
+async function runChatCompletion(messages, env, request, language = 'es') {
   let firstResult;
   try {
     firstResult = await attemptBufferedRound(
@@ -259,6 +290,9 @@ async function runChatCompletion(messages, env, request) {
     {
       role: 'assistant',
       content: null,
+      // DeepSeek's thinking mode rejects a tool_calls turn in history without
+      // this field, even though these tool_calls came from Gemini in round 1.
+      reasoning_content: '',
       tool_calls: toolCalls.map((tc) => ({
         id: tc.id,
         type: 'function',
@@ -270,12 +304,16 @@ async function runChatCompletion(messages, env, request) {
 
   let secondResult;
   try {
-    secondResult = await attemptBufferedRound(
+    secondResult = await bufferedRoundWithLeakRetry(
       followUp,
       (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY)
     );
   } catch (e) {
     return sseError(request, e.message);
+  }
+
+  if (secondResult === null) {
+    return replayBufferedAsSSE([fallbackMessage(language)], request);
   }
 
   return replayBufferedAsSSE(secondResult.bufferedTokens, request);
@@ -404,7 +442,7 @@ async function handleChat(request, env) {
     { role: 'user', content: message },
   ];
 
-  return runChatCompletion(messages, env, request);
+  return runChatCompletion(messages, env, request, language);
 }
 
 export default {

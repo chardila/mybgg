@@ -4,6 +4,7 @@ export function fakeSSEResponse(dataLines, { ok = true, status = 200 } = {}) {
   return {
     ok,
     status,
+    text: async () => body,
     body: new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode(body));
