@@ -1,18 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { callDeepSeek, parseDeepSeekStream, streamDeepSeek } from '../src/index.js';
-import { fakeSSEResponse } from './sseHelpers.js';
-
-async function readAllText(response) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let text = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    text += decoder.decode(value);
-  }
-  return text;
-}
+import { fakeSSEResponse, readAllText } from './sseHelpers.js';
 
 describe('callDeepSeek', () => {
   afterEach(() => vi.unstubAllGlobals());
