@@ -12,3 +12,15 @@ export function fakeSSEResponse(dataLines, { ok = true, status = 200 } = {}) {
     }),
   };
 }
+
+export async function readAllText(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value);
+  }
+  return text;
+}

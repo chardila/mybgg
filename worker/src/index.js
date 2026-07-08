@@ -1,5 +1,8 @@
 import { buildDeepDiveContext } from './deepDiveContext.js';
 import { checkRateLimit } from './rateLimiter.js';
+import { BGG_TOOL_DEFINITIONS, executeBggTool } from './bggTools.js';
+
+const MAX_TOOL_CALLS_PER_ROUND = 3;
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
@@ -20,12 +23,14 @@ Algunas entradas del catálogo incluyen un campo "expansions" con las expansione
 Haz preguntas concretas cuando ayude a decidir: cuántos jugadores son, cuánto tiempo tienen, si quieren algo más ligero o más desafiante. Usa las respuestas para acotar entre los juegos y expansiones disponibles.
 Preserva la terminología oficial en inglés cuando no hay traducción establecida (ej: "Worker Placement", "Area Control").
 Sé conciso y práctico. Cuando el usuario haya decidido qué jugar, dile que seleccione el juego base en el desplegable y marque las expansiones elegidas (si el juego tiene expansiones) para obtener ayuda detallada durante la partida.
+Si la pregunta requiere información que no está en el catálogo (por ejemplo, decidir qué expansión o juego nuevo comprar), tenés herramientas para buscar en BoardGameGeek en vivo — úsalas.
 IMPORTANTE: Solo responde preguntas relacionadas con juegos de mesa. Si el usuario pregunta sobre cualquier otro tema, responde amablemente que solo puedes ayudar con juegos de mesa y redirige la conversación.`,
     en: `You are a board game expert assistant. You help the user decide what to play for their game night.
 You have access to the user's game catalog. Respond in English.
 Some catalog entries include an "expansions" field listing the expansions the user owns for that game. Take them into account actively: if what the user wants (more players than the base game supports, more strategic depth, a different theme or mechanic) is better solved by adding one or more specific expansions, suggest the base game together with those expansions by name, rather than only ever recommending the bare base game.
 Ask concrete questions when it helps decide: how many players, how much time they have, whether they want something lighter or more challenging. Use the answers to narrow down the available games and expansions.
 Be concise and practical. Once the user has decided what to play, tell them to select the base game from the dropdown and check the expansions they chose (if the game has any) to get detailed in-game help.
+If the question needs information not in the catalog (for example, deciding which expansion or new game to buy), you have tools to search BoardGameGeek live — use them.
 IMPORTANT: Only answer questions related to board games. If the user asks about any other topic, kindly let them know you can only help with board games and redirect the conversation.`,
   },
   deep_dive: {
@@ -33,6 +38,7 @@ IMPORTANT: Only answer questions related to board games. If the user asks about 
       `Eres un experto en ${gameName}. Tienes acceso al wiki completo del juego incluyendo reglas, setup, guía de enseñanza, FAQ y glosario.
 El contexto puede incluir el juego base junto con una o más expansiones que el usuario seleccionó. Cada sección de expansión describe solo lo que esa expansión agrega o modifica respecto al juego base, y no repite sus reglas — si la pregunta requiere combinar ambas, hazlo explícitamente y aclara qué parte viene del juego base y cuál de la expansión.
 Responde en español. Preserva los nombres oficiales de componentes y mecánicas en inglés cuando no hay traducción establecida.
+Si la pregunta es sobre reglas discutidas en el foro de BGG, variantes hechas por fans, o modos de un jugador no oficiales que no están en el wiki, tenés herramientas para buscar en los foros de BoardGameGeek en vivo — úsalas.
 IMPORTANTE: Solo responde preguntas sobre ${gameName} y juegos de mesa en general. Si el usuario pregunta sobre cualquier otro tema, responde amablemente que solo puedes ayudar con preguntas sobre este juego y redirige la conversación.
 FUENTE: Siempre indica de dónde viene tu respuesta:
 - Si la información está en el wiki, comienza con "📖 Según el wiki:"
@@ -42,6 +48,7 @@ FUENTE: Siempre indica de dónde viene tu respuesta:
       `You are an expert on ${gameName}. You have access to the complete game wiki including rules, setup, teaching guide, FAQ, and glossary.
 The context may include the base game together with one or more expansions the user selected. Each expansion section describes only what that expansion adds or changes relative to the base game, and does not repeat its rules — if the question requires combining both, do so explicitly and make clear which part comes from the base game and which from the expansion.
 Respond in English. Be precise about rules.
+If the question is about rules discussed on BGG's forums, fan-made variants, or unofficial solo modes not in the wiki, you have tools to search BoardGameGeek's forums live — use them.
 IMPORTANT: Only answer questions about ${gameName} and board games in general. If the user asks about any other topic, kindly let them know you can only help with questions about this game and redirect the conversation.
 SOURCE: Always indicate where your answer comes from:
 - If the information is in the wiki, start with "📖 From the wiki:"
@@ -187,6 +194,65 @@ function replayBufferedAsSSE(tokens, request) {
   });
 }
 
+async function runChatCompletion(messages, env, request) {
+  let firstResult;
+  const bufferedTokens = [];
+
+  try {
+    const response = await callDeepSeek(messages, env.DEEPSEEK_API_KEY, {
+      tools: BGG_TOOL_DEFINITIONS,
+    });
+    firstResult = await parseDeepSeekStream(response, async (token) => {
+      bufferedTokens.push(token);
+    });
+  } catch (e) {
+    return sseError(request, e.message);
+  }
+
+  if (firstResult.finishReason !== 'tool_calls' || firstResult.toolCalls.length === 0) {
+    return replayBufferedAsSSE(bufferedTokens, request);
+  }
+
+  const toolCalls = firstResult.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+
+  const toolMessages = await Promise.all(
+    toolCalls.map(async (tc) => {
+      let args = {};
+      try {
+        args = JSON.parse(tc.function.arguments || '{}');
+      } catch {
+        // malformed arguments from the model; execute with no args, let the tool report the error
+      }
+      const { result, error } = await executeBggTool(tc.function.name, args, env.BGG_TOKEN);
+      return {
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: JSON.stringify(error ? { error } : { result }),
+      };
+    })
+  );
+
+  const followUp = [
+    ...messages,
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: toolCalls.map((tc) => ({
+        id: tc.id,
+        type: 'function',
+        function: tc.function,
+      })),
+    },
+    ...toolMessages,
+  ];
+
+  try {
+    return await streamDeepSeek(followUp, env.DEEPSEEK_API_KEY, request);
+  } catch (e) {
+    return sseError(request, e.message);
+  }
+}
+
 async function handleGetGames(request, env) {
   const catalog = await env.WIKI.get('catalog');
   return new Response(catalog || '[]', {
@@ -310,11 +376,7 @@ async function handleChat(request, env) {
     { role: 'user', content: message },
   ];
 
-  try {
-    return await streamDeepSeek(messages, env.DEEPSEEK_API_KEY, request);
-  } catch (e) {
-    return sseError(request, e.message);
-  }
+  return runChatCompletion(messages, env, request);
 }
 
 export default {
@@ -341,4 +403,4 @@ export default {
   },
 };
 
-export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, replayBufferedAsSSE };
+export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, replayBufferedAsSSE, runChatCompletion };
