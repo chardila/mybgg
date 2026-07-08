@@ -88,6 +88,23 @@ async function callDeepSeek(messages, apiKey, { tools } = {}) {
   return response;
 }
 
+async function callGemini(messages, apiKey, { tools } = {}) {
+  const body = { model: 'gemini-2.5-flash-lite', messages, stream: true };
+  if (tools) body.tools = tools;
+
+  const response = await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) throw new Error(`Gemini API error: ${response.status}`);
+  return response;
+}
+
 async function parseDeepSeekStream(response, onToken) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -194,52 +211,24 @@ function replayBufferedAsSSE(tokens, request) {
   });
 }
 
-function looksLikeLeakedToolCall(text) {
-  return text.includes('DSML');
-}
-
-function fallbackMessage(language) {
-  return language === 'en'
-    ? 'I ran into a problem answering that. Could you rephrase your question?'
-    : 'Tuve un problema respondiendo eso. ¿Podés reformular la pregunta?';
-}
-
-async function attemptBufferedRound(messages, env, tools) {
+async function attemptBufferedRound(messages, callFn) {
   const bufferedTokens = [];
-  const response = await callDeepSeek(messages, env.DEEPSEEK_API_KEY, tools ? { tools } : {});
+  const response = await callFn(messages);
   const result = await parseDeepSeekStream(response, async (token) => {
     bufferedTokens.push(token);
   });
   return { ...result, bufferedTokens };
 }
 
-// DeepSeek's tool-calling occasionally leaks its internal DSML markup as plain
-// content (finish_reason: "stop") instead of populating tool_calls, in either
-// round. It's non-deterministic upstream, so a single retry is the cheap fix;
-// returns null if it leaks twice in a row, so the caller can fall back.
-async function bufferedRoundWithLeakRetry(messages, env, tools) {
-  let result = await attemptBufferedRound(messages, env, tools);
-  if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
-    result = await attemptBufferedRound(messages, env, tools);
-    if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
-      console.error('DeepSeek leaked DSML tool-call markup twice in a row, falling back');
-      return null;
-    }
-  }
-  return result;
-}
-
-async function runChatCompletion(messages, env, request, language = 'es') {
+async function runChatCompletion(messages, env, request) {
   let firstResult;
-
   try {
-    firstResult = await bufferedRoundWithLeakRetry(messages, env, BGG_TOOL_DEFINITIONS);
+    firstResult = await attemptBufferedRound(
+      messages,
+      (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS })
+    );
   } catch (e) {
     return sseError(request, e.message);
-  }
-
-  if (firstResult === null) {
-    return replayBufferedAsSSE([fallbackMessage(language)], request);
   }
 
   if (firstResult.finishReason !== 'tool_calls' || firstResult.toolCalls.length === 0) {
@@ -281,13 +270,12 @@ async function runChatCompletion(messages, env, request, language = 'es') {
 
   let secondResult;
   try {
-    secondResult = await bufferedRoundWithLeakRetry(followUp, env, undefined);
+    secondResult = await attemptBufferedRound(
+      followUp,
+      (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY)
+    );
   } catch (e) {
     return sseError(request, e.message);
-  }
-
-  if (secondResult === null) {
-    return replayBufferedAsSSE([fallbackMessage(language)], request);
   }
 
   return replayBufferedAsSSE(secondResult.bufferedTokens, request);
@@ -416,7 +404,7 @@ async function handleChat(request, env) {
     { role: 'user', content: message },
   ];
 
-  return runChatCompletion(messages, env, request, language);
+  return runChatCompletion(messages, env, request);
 }
 
 export default {

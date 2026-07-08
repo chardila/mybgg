@@ -39,28 +39,36 @@ const noToolCallSSE = () =>
     JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
   ]);
 
-const dsmlLeakSSE = () =>
-  fakeSSEResponse([
-    JSON.stringify({
-      choices: [
-        {
-          index: 0,
-          delta: {
-            content:
-              '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="bgg_get_game_details">\n<｜｜DSML｜｜parameter name="id" string="false">266192</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>',
-          },
-        },
-      ],
-    }),
-    JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
-  ]);
 
-const env = { DEEPSEEK_API_KEY: 'key123', BGG_TOKEN: 'bgg-token' };
+const env = { DEEPSEEK_API_KEY: 'key123', GEMINI_API_KEY: 'test-gemini-key', BGG_TOKEN: 'bgg-token' };
 
 describe('runChatCompletion', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     executeBggTool.mockReset();
+  });
+
+  it('calls Gemini API for round 1 and DeepSeek for round 2', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }])
+      )
+      .mockResolvedValueOnce(
+        fakeSSEResponse([
+          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        ])
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+    );
+    expect(mockFetch.mock.calls[1][0]).toBe('https://api.deepseek.com/chat/completions');
   });
 
   it('replays buffered content when no tool call is requested', async () => {
@@ -169,87 +177,4 @@ describe('runChatCompletion', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it('retries once when the model leaks raw DSML tool-call markup instead of using tool_calls, and uses the clean retry', async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce(dsmlLeakSSE())
-      .mockResolvedValueOnce(noToolCallSSE());
-    vi.stubGlobal('fetch', mockFetch);
-
-    const response = await runChatCompletion([{ role: 'user', content: 'buscá Wingspan' }], env, fakeRequest());
-    const text = await readAllText(response);
-
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(text).not.toContain('DSML');
-    expect(text).toContain('data: {"token":"Hola"}');
-    expect(executeBggTool).not.toHaveBeenCalled();
-  });
-
-  it('falls back to a friendly message when DSML leaks on both the initial attempt and the retry', async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce(dsmlLeakSSE())
-      .mockResolvedValueOnce(dsmlLeakSSE());
-    vi.stubGlobal('fetch', mockFetch);
-
-    const response = await runChatCompletion([{ role: 'user', content: 'buscá Wingspan' }], env, fakeRequest(), 'es');
-    const text = await readAllText(response);
-
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(text).not.toContain('DSML');
-    expect(text).toContain('Tuve un problema');
-    expect(executeBggTool).not.toHaveBeenCalled();
-  });
-
-  it('falls back to an English message when language is "en"', async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce(dsmlLeakSSE())
-      .mockResolvedValueOnce(dsmlLeakSSE());
-    vi.stubGlobal('fetch', mockFetch);
-
-    const response = await runChatCompletion([{ role: 'user', content: 'search Wingspan' }], env, fakeRequest(), 'en');
-    const text = await readAllText(response);
-
-    expect(text).toContain('I ran into a problem');
-  });
-
-  it('retries round 2 once and uses the clean retry when the follow-up answer leaks DSML', async () => {
-    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
-      .mockResolvedValueOnce(dsmlLeakSSE())
-      .mockResolvedValueOnce(
-        fakeSSEResponse([
-          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
-          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
-        ])
-      );
-    vi.stubGlobal('fetch', mockFetch);
-
-    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
-    const text = await readAllText(response);
-
-    expect(mockFetch).toHaveBeenCalledTimes(3);
-    expect(text).not.toContain('DSML');
-    expect(text).toContain('data: {"token":"Encontré Wingspan."}');
-  });
-
-  it('falls back to a friendly message when the follow-up answer leaks DSML on both attempts', async () => {
-    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
-      .mockResolvedValueOnce(dsmlLeakSSE())
-      .mockResolvedValueOnce(dsmlLeakSSE());
-    vi.stubGlobal('fetch', mockFetch);
-
-    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest(), 'es');
-    const text = await readAllText(response);
-
-    expect(mockFetch).toHaveBeenCalledTimes(3);
-    expect(text).not.toContain('DSML');
-    expect(text).toContain('Tuve un problema');
-  });
 });
