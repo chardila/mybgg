@@ -215,12 +215,20 @@ function replayBufferedAsSSE(tokens, request) {
   });
 }
 
-async function attemptBufferedRound(messages, callFn) {
+async function attemptBufferedRound(messages, callFn, roundLabel) {
   const bufferedTokens = [];
   const response = await callFn(messages);
   const result = await parseDeepSeekStream(response, async (token) => {
     bufferedTokens.push(token);
   });
+  if (result.finishReason !== 'stop' && result.finishReason !== 'tool_calls') {
+    // Anomalous termination (e.g. hit a token cap or the upstream stream was
+    // cut short) — the buffered tokens still get replayed to the user as-is,
+    // but this is the one signal that tells us which case it was.
+    console.error(
+      `Unexpected finishReason "${result.finishReason}" in ${roundLabel} (${bufferedTokens.length} tokens buffered)`
+    );
+  }
   return { ...result, bufferedTokens };
 }
 
@@ -240,9 +248,9 @@ function fallbackMessage(language) {
 // null if it leaks twice in a row, so the caller can fall back. Round 1 no
 // longer uses DeepSeek (see callGemini), so this only guards round 2.
 async function bufferedRoundWithLeakRetry(messages, callFn) {
-  let result = await attemptBufferedRound(messages, callFn);
+  let result = await attemptBufferedRound(messages, callFn, 'round 2');
   if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
-    result = await attemptBufferedRound(messages, callFn);
+    result = await attemptBufferedRound(messages, callFn, 'round 2 retry');
     if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
       console.error('DeepSeek leaked DSML tool-call markup twice in a row, falling back');
       return null;
@@ -256,7 +264,8 @@ async function runChatCompletion(messages, env, request, language = 'es') {
   try {
     firstResult = await attemptBufferedRound(
       messages,
-      (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS })
+      (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
+      'round 1'
     );
   } catch (e) {
     return sseError(request, e.message);
