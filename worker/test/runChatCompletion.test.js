@@ -39,6 +39,22 @@ const noToolCallSSE = () =>
     JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
   ]);
 
+const dsmlLeakSSE = () =>
+  fakeSSEResponse([
+    JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            content:
+              '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="bgg_get_game_details">\n<｜｜DSML｜｜parameter name="id" string="false">266192</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>',
+          },
+        },
+      ],
+    }),
+    JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+  ]);
+
 const env = { DEEPSEEK_API_KEY: 'key123', BGG_TOKEN: 'bgg-token' };
 
 describe('runChatCompletion', () => {
@@ -151,5 +167,50 @@ describe('runChatCompletion', () => {
 
     expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', {}, 'bgg-token');
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries once when the model leaks raw DSML tool-call markup instead of using tool_calls, and uses the clean retry', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(noToolCallSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'buscá Wingspan' }], env, fakeRequest());
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(text).not.toContain('DSML');
+    expect(text).toContain('data: {"token":"Hola"}');
+    expect(executeBggTool).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a friendly message when DSML leaks on both the initial attempt and the retry', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'buscá Wingspan' }], env, fakeRequest(), 'es');
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(text).not.toContain('DSML');
+    expect(text).toContain('Tuve un problema');
+    expect(executeBggTool).not.toHaveBeenCalled();
+  });
+
+  it('falls back to an English message when language is "en"', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'search Wingspan' }], env, fakeRequest(), 'en');
+    const text = await readAllText(response);
+
+    expect(text).toContain('I ran into a problem');
   });
 });

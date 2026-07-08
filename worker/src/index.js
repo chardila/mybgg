@@ -194,25 +194,44 @@ function replayBufferedAsSSE(tokens, request) {
   });
 }
 
-async function runChatCompletion(messages, env, request) {
-  let firstResult;
-  // Buffered, not streamed live: finish_reason (tool call vs. stop) is only known
-  // once this round ends, so every chat turn pays this latency, not just tool calls.
+function looksLikeLeakedToolCall(text) {
+  return text.includes('DSML');
+}
+
+async function attemptBufferedRound(messages, env) {
   const bufferedTokens = [];
+  const response = await callDeepSeek(messages, env.DEEPSEEK_API_KEY, {
+    tools: BGG_TOOL_DEFINITIONS,
+  });
+  const result = await parseDeepSeekStream(response, async (token) => {
+    bufferedTokens.push(token);
+  });
+  return { ...result, bufferedTokens };
+}
+
+async function runChatCompletion(messages, env, request, language = 'es') {
+  let firstResult;
 
   try {
-    const response = await callDeepSeek(messages, env.DEEPSEEK_API_KEY, {
-      tools: BGG_TOOL_DEFINITIONS,
-    });
-    firstResult = await parseDeepSeekStream(response, async (token) => {
-      bufferedTokens.push(token);
-    });
+    firstResult = await attemptBufferedRound(messages, env);
+    // DeepSeek's tool-calling occasionally leaks its internal DSML markup as
+    // plain content (finish_reason: "stop") instead of populating tool_calls.
+    // It's non-deterministic upstream, so a single retry is the cheap fix.
+    if (looksLikeLeakedToolCall(firstResult.bufferedTokens.join(''))) {
+      firstResult = await attemptBufferedRound(messages, env);
+      if (looksLikeLeakedToolCall(firstResult.bufferedTokens.join(''))) {
+        const fallbackMessage = language === 'en'
+          ? 'I ran into a problem answering that. Could you rephrase your question?'
+          : 'Tuve un problema respondiendo eso. ¿Podés reformular la pregunta?';
+        return replayBufferedAsSSE([fallbackMessage], request);
+      }
+    }
   } catch (e) {
     return sseError(request, e.message);
   }
 
   if (firstResult.finishReason !== 'tool_calls' || firstResult.toolCalls.length === 0) {
-    return replayBufferedAsSSE(bufferedTokens, request);
+    return replayBufferedAsSSE(firstResult.bufferedTokens, request);
   }
 
   const toolCalls = firstResult.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
@@ -378,7 +397,7 @@ async function handleChat(request, env) {
     { role: 'user', content: message },
   ];
 
-  return runChatCompletion(messages, env, request);
+  return runChatCompletion(messages, env, request, language);
 }
 
 export default {
