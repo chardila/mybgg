@@ -3,6 +3,7 @@ import { checkRateLimit } from './rateLimiter.js';
 import { BGG_TOOL_DEFINITIONS, executeBggTool } from './bggTools.js';
 
 const MAX_TOOL_CALLS_PER_ROUND = 3;
+const MAX_TOOL_ROUNDS = 2;
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
@@ -267,30 +268,8 @@ async function attemptBufferedRoundWithRetry(messages, callFn, roundLabel, shoul
   return result;
 }
 
-async function runChatCompletion(messages, env, request, language = 'es') {
-  let firstResult;
-  try {
-    firstResult = await attemptBufferedRoundWithRetry(
-      messages,
-      (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
-      'round 1',
-      isIncompleteStream
-    );
-  } catch (e) {
-    return sseError(request, e.message);
-  }
-
-  if (firstResult === null) {
-    return replayBufferedAsSSE([fallbackMessage(language)], request);
-  }
-
-  if (firstResult.finishReason !== 'tool_calls' || firstResult.toolCalls.length === 0) {
-    return replayBufferedAsSSE(firstResult.bufferedTokens, request);
-  }
-
-  const toolCalls = firstResult.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
-
-  const toolMessages = await Promise.all(
+async function executeToolCalls(toolCalls, env) {
+  return Promise.all(
     toolCalls.map(async (tc) => {
       let args = {};
       try {
@@ -306,28 +285,84 @@ async function runChatCompletion(messages, env, request, language = 'es') {
       };
     })
   );
+}
 
-  const followUp = [
-    ...messages,
-    {
-      role: 'assistant',
-      content: null,
-      // DeepSeek's thinking mode rejects a tool_calls turn in history without
-      // this field, even though these tool_calls came from Gemini in round 1.
-      reasoning_content: '',
-      tool_calls: toolCalls.map((tc) => ({
-        id: tc.id,
-        type: 'function',
-        function: tc.function,
-      })),
-    },
-    ...toolMessages,
-  ];
+function toolCallsAssistantMessage(toolCalls) {
+  return {
+    role: 'assistant',
+    content: null,
+    // DeepSeek's thinking mode rejects a tool_calls turn in history without
+    // this field, even though these tool_calls came from Gemini, not DeepSeek.
+    reasoning_content: '',
+    tool_calls: toolCalls.map((tc) => ({
+      id: tc.id,
+      type: 'function',
+      function: tc.function,
+    })),
+  };
+}
+
+// Told to the synthesis model when MAX_TOOL_ROUNDS was used up and Gemini
+// still wanted to call tools. Without this, DeepSeek tends to leak its
+// attempt at requesting a tool it doesn't have as raw DSML markup instead of
+// just answering with what's available.
+function noMoreToolsNote(language) {
+  return {
+    role: 'system',
+    content:
+      language === 'en'
+        ? "Internal note: no further BoardGameGeek lookups are available for this reply. Answer using only the information already gathered above, and if something relevant is missing, say so explicitly instead of trying to use a tool. Don't mention this note to the user."
+        : 'Nota interna: ya no hay más búsquedas de BoardGameGeek disponibles para esta respuesta. Respondé solo con la información ya reunida arriba, y si falta algo relevante decilo explícitamente en vez de intentar usar una herramienta. No menciones esta nota al usuario.',
+  };
+}
+
+async function runChatCompletion(messages, env, request, language = 'es') {
+  let currentMessages = messages;
+  let toolsWereCalled = false;
+  let hitToolRoundCap = false;
+
+  for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
+    let result;
+    try {
+      result = await attemptBufferedRoundWithRetry(
+        currentMessages,
+        (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
+        `round 1 (tool round ${round})`,
+        isIncompleteStream
+      );
+    } catch (e) {
+      return sseError(request, e.message);
+    }
+
+    if (result === null) {
+      return replayBufferedAsSSE([fallbackMessage(language)], request);
+    }
+
+    if (result.finishReason !== 'tool_calls' || result.toolCalls.length === 0) {
+      if (!toolsWereCalled) {
+        return replayBufferedAsSSE(result.bufferedTokens, request);
+      }
+      break;
+    }
+
+    toolsWereCalled = true;
+    const toolCalls = result.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+    const toolMessages = await executeToolCalls(toolCalls, env);
+    currentMessages = [...currentMessages, toolCallsAssistantMessage(toolCalls), ...toolMessages];
+
+    if (round === MAX_TOOL_ROUNDS) {
+      hitToolRoundCap = true;
+    }
+  }
+
+  const synthesisMessages = hitToolRoundCap
+    ? [...currentMessages, noMoreToolsNote(language)]
+    : currentMessages;
 
   let secondResult;
   try {
     secondResult = await attemptBufferedRoundWithRetry(
-      followUp,
+      synthesisMessages,
       (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
       'round 2',
       (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))

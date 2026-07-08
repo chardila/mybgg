@@ -8,6 +8,9 @@ vi.mock('../src/bggTools.js', () => ({
   executeBggTool: vi.fn(),
 }));
 
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
+
 function fakeRequest() {
   return new Request('https://example.com/api/chat', { headers: { Origin: 'https://bgg.cardila.com' } });
 }
@@ -39,6 +42,12 @@ const noToolCallSSE = () =>
     JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
   ]);
 
+// Gemini deciding, after seeing tool results, that it doesn't need to call
+// anything else. Content is irrelevant — it's discarded once tools have
+// already been called in an earlier round.
+const toolRoundDoneSSE = () =>
+  fakeSSEResponse([JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })]);
+
 const dsmlLeakSSE = () =>
   fakeSSEResponse([
     JSON.stringify({
@@ -66,13 +75,14 @@ describe('runChatCompletion', () => {
     executeBggTool.mockReset();
   });
 
-  it('calls Gemini API for round 1 and DeepSeek for round 2', async () => {
+  it('calls Gemini for both the tool round and the confirmation round, then DeepSeek for synthesis', async () => {
     executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(
         toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }])
       )
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(
         fakeSSEResponse([
           JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
@@ -83,14 +93,17 @@ describe('runChatCompletion', () => {
 
     await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
 
-    expect(mockFetch.mock.calls[0][0]).toBe(
-      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
-    );
-    expect(mockFetch.mock.calls[1][0]).toBe('https://api.deepseek.com/chat/completions');
+    expect(mockFetch.mock.calls[0][0]).toBe(GEMINI_URL);
+    expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
+    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
 
-    const round2Body = JSON.parse(mockFetch.mock.calls[1][1].body);
-    const assistantMessage = round2Body.messages.find((m) => m.role === 'assistant' && m.tool_calls);
+    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    const assistantMessage = synthesisBody.messages.find((m) => m.role === 'assistant' && m.tool_calls);
     expect(assistantMessage.reasoning_content).toBe('');
+    // Gemini confirmed it was done on its own — the round-cap note shouldn't be added.
+    expect(synthesisBody.messages.some((m) => m.role === 'system' && m.content.includes('Nota interna'))).toBe(
+      false
+    );
   });
 
   it('replays buffered content when no tool call is requested', async () => {
@@ -111,6 +124,7 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(
         fakeSSEResponse([
           JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
@@ -126,14 +140,14 @@ describe('runChatCompletion', () => {
     );
     const text = await readAllText(response);
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', { query: 'Wingspan' }, 'bgg-token');
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
 
-    const round2Body = JSON.parse(mockFetch.mock.calls[1][1].body);
-    const toolMessage = round2Body.messages.find((m) => m.role === 'tool');
+    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    const toolMessage = synthesisBody.messages.find((m) => m.role === 'tool');
     expect(toolMessage.content).toBe(JSON.stringify({ result: [{ id: 1, name: 'Wingspan' }] }));
-    expect(round2Body.tools).toBeUndefined();
+    expect(synthesisBody.tools).toBeUndefined();
   });
 
   it('executes at most 3 tool calls per round', async () => {
@@ -146,6 +160,7 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE(fiveToolCalls))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
@@ -159,30 +174,41 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
     const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
     await readAllText(response);
 
-    const round2Body = JSON.parse(mockFetch.mock.calls[1][1].body);
-    const toolMessage = round2Body.messages.find((m) => m.role === 'tool');
+    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    const toolMessage = synthesisBody.messages.find((m) => m.role === 'tool');
     expect(toolMessage.content).toBe(JSON.stringify({ error: 'BGG unavailable' }));
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it('never attempts a third round even if the follow-up response also requests tool calls', async () => {
+  it('caps tool-calling at 2 rounds and tells the synthesis model no more lookups are available', async () => {
     executeBggTool.mockResolvedValue({ result: [] });
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"x"}' }]))
-      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_2', name: 'bgg_search_game', arguments: '{"query":"y"}' }]));
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_2', name: 'bgg_search_game', arguments: '{"query":"y"}' }]))
+      .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
     await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(executeBggTool).toHaveBeenCalledTimes(1);
+    // Two Gemini tool rounds + one DeepSeek synthesis call — never a third Gemini round.
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch.mock.calls[0][0]).toBe(GEMINI_URL);
+    expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
+    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
+    expect(executeBggTool).toHaveBeenCalledTimes(2);
+
+    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    const note = synthesisBody.messages[synthesisBody.messages.length - 1];
+    expect(note.role).toBe('system');
+    expect(note.content).toContain('Nota interna');
   });
 
   it('executes the tool with empty args when the model sends malformed arguments JSON', async () => {
@@ -190,13 +216,14 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{bad json' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
     await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
 
     expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', {}, 'bgg-token');
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
   it('retries round 2 once and uses the clean retry when the follow-up answer leaks DSML', async () => {
@@ -204,6 +231,7 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(dsmlLeakSSE())
       .mockResolvedValueOnce(
         fakeSSEResponse([
@@ -216,7 +244,7 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
     const text = await readAllText(response);
 
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(text).not.toContain('DSML');
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
   });
@@ -226,6 +254,7 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(dsmlLeakSSE())
       .mockResolvedValueOnce(dsmlLeakSSE());
     vi.stubGlobal('fetch', mockFetch);
@@ -233,7 +262,7 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest(), 'es');
     const text = await readAllText(response);
 
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(text).not.toContain('DSML');
     expect(text).toContain('Tuve un problema');
   });
@@ -243,6 +272,7 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(dsmlLeakSSE())
       .mockResolvedValueOnce(dsmlLeakSSE());
     vi.stubGlobal('fetch', mockFetch);
@@ -286,6 +316,7 @@ describe('runChatCompletion', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(incompleteStreamSSE())
       .mockResolvedValueOnce(
         fakeSSEResponse([
@@ -298,7 +329,7 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
     const text = await readAllText(response);
 
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
   });
 
