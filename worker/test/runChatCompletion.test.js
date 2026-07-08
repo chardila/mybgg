@@ -138,4 +138,18 @@ describe('runChatCompletion', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(executeBggTool).toHaveBeenCalledTimes(1);
   });
+
+  it('executes the tool with empty args when the model sends malformed arguments JSON', async () => {
+    executeBggTool.mockResolvedValue({ result: [] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{bad json' }]))
+      .mockResolvedValueOnce(noToolCallSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+
+    expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', {}, 'bgg-token');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });

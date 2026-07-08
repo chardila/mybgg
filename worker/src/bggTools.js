@@ -14,6 +14,7 @@ const REPEATABLE_PATHS = new Set([
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
+  parseTagValue: false,
   isArray: (_name, jpath) => REPEATABLE_PATHS.has(jpath),
 });
 

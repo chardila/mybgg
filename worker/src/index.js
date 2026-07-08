@@ -196,6 +196,8 @@ function replayBufferedAsSSE(tokens, request) {
 
 async function runChatCompletion(messages, env, request) {
   let firstResult;
+  // Buffered, not streamed live: finish_reason (tool call vs. stop) is only known
+  // once this round ends, so every chat turn pays this latency, not just tool calls.
   const bufferedTokens = [];
 
   try {
