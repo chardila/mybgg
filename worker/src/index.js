@@ -57,63 +57,125 @@ function sseError(request, message, status = 200) {
   );
 }
 
-async function streamDeepSeek(messages, apiKey, request) {
+function sseFormat(token) {
+  return `data: ${JSON.stringify({ token })}\n\n`;
+}
+
+async function callDeepSeek(messages, apiKey, { tools } = {}) {
+  const body = { model: 'deepseek-v4-flash', messages, stream: true };
+  if (tools) body.tools = tools;
+
   const response = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model: 'deepseek-v4-flash', messages, stream: true }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
     throw new Error(`DeepSeek API error: ${response.status}`);
   }
 
+  return response;
+}
+
+async function parseDeepSeekStream(response, onToken) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finishReason = null;
+  const toolCallsByIndex = new Map();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      const choice = parsed.choices?.[0];
+      if (!choice) continue;
+      const delta = choice.delta || {};
+
+      if (delta.content) {
+        await onToken(delta.content);
+      }
+
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const existing = toolCallsByIndex.get(tc.index) || {
+            id: '',
+            function: { name: '', arguments: '' },
+          };
+          if (tc.id) existing.id = tc.id;
+          if (tc.function?.name) existing.function.name = tc.function.name;
+          if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+          toolCallsByIndex.set(tc.index, existing);
+        }
+      }
+
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+    }
+  }
+
+  return { finishReason, toolCalls: [...toolCallsByIndex.values()] };
+}
+
+async function streamDeepSeek(messages, apiKey, request) {
+  const response = await callDeepSeek(messages, apiKey, {});
+
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
 
   (async () => {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') {
-            await writer.write(encoder.encode('data: [DONE]\n\n'));
-            return;
-          }
-          try {
-            const parsed = JSON.parse(data);
-            const token = parsed.choices?.[0]?.delta?.content;
-            if (token) {
-              await writer.write(
-                encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)
-              );
-            }
-          } catch {}
-        }
-      }
+      await parseDeepSeekStream(response, async (token) => {
+        await writer.write(encoder.encode(sseFormat(token)));
+      });
       await writer.write(encoder.encode('data: [DONE]\n\n'));
     } catch (e) {
       await writer.write(
-        encoder.encode(
-          `data: ${JSON.stringify({ error: e.message })}\n\ndata: [DONE]\n\n`
-        )
+        encoder.encode(`data: ${JSON.stringify({ error: e.message })}\n\ndata: [DONE]\n\n`)
       );
     } finally {
       writer.close();
     }
+  })();
+
+  return new Response(readable, {
+    headers: {
+      ...getCorsHeaders(request),
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    },
+  });
+}
+
+function replayBufferedAsSSE(tokens, request) {
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  (async () => {
+    for (const token of tokens) {
+      await writer.write(encoder.encode(sseFormat(token)));
+    }
+    await writer.write(encoder.encode('data: [DONE]\n\n'));
+    writer.close();
   })();
 
   return new Response(readable, {
@@ -278,3 +340,5 @@ export default {
     return new Response('not found', { status: 404, headers: cors });
   },
 };
+
+export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, replayBufferedAsSSE };
