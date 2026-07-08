@@ -10,5 +10,8 @@
   "devDependencies": {
     "vitest": "^4.1.9",
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.9.3"
   }
 }
