@@ -213,4 +213,43 @@ describe('runChatCompletion', () => {
 
     expect(text).toContain('I ran into a problem');
   });
+
+  it('retries round 2 once and uses the clean retry when the follow-up answer leaks DSML', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(
+        fakeSSEResponse([
+          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        ])
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(text).not.toContain('DSML');
+    expect(text).toContain('data: {"token":"Encontré Wingspan."}');
+  });
+
+  it('falls back to a friendly message when the follow-up answer leaks DSML on both attempts', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest(), 'es');
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(text).not.toContain('DSML');
+    expect(text).toContain('Tuve un problema');
+  });
 });

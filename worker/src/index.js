@@ -198,36 +198,48 @@ function looksLikeLeakedToolCall(text) {
   return text.includes('DSML');
 }
 
-async function attemptBufferedRound(messages, env) {
+function fallbackMessage(language) {
+  return language === 'en'
+    ? 'I ran into a problem answering that. Could you rephrase your question?'
+    : 'Tuve un problema respondiendo eso. ¿Podés reformular la pregunta?';
+}
+
+async function attemptBufferedRound(messages, env, tools) {
   const bufferedTokens = [];
-  const response = await callDeepSeek(messages, env.DEEPSEEK_API_KEY, {
-    tools: BGG_TOOL_DEFINITIONS,
-  });
+  const response = await callDeepSeek(messages, env.DEEPSEEK_API_KEY, tools ? { tools } : {});
   const result = await parseDeepSeekStream(response, async (token) => {
     bufferedTokens.push(token);
   });
   return { ...result, bufferedTokens };
 }
 
+// DeepSeek's tool-calling occasionally leaks its internal DSML markup as plain
+// content (finish_reason: "stop") instead of populating tool_calls, in either
+// round. It's non-deterministic upstream, so a single retry is the cheap fix;
+// returns null if it leaks twice in a row, so the caller can fall back.
+async function bufferedRoundWithLeakRetry(messages, env, tools) {
+  let result = await attemptBufferedRound(messages, env, tools);
+  if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
+    result = await attemptBufferedRound(messages, env, tools);
+    if (looksLikeLeakedToolCall(result.bufferedTokens.join(''))) {
+      console.error('DeepSeek leaked DSML tool-call markup twice in a row, falling back');
+      return null;
+    }
+  }
+  return result;
+}
+
 async function runChatCompletion(messages, env, request, language = 'es') {
   let firstResult;
 
   try {
-    firstResult = await attemptBufferedRound(messages, env);
-    // DeepSeek's tool-calling occasionally leaks its internal DSML markup as
-    // plain content (finish_reason: "stop") instead of populating tool_calls.
-    // It's non-deterministic upstream, so a single retry is the cheap fix.
-    if (looksLikeLeakedToolCall(firstResult.bufferedTokens.join(''))) {
-      firstResult = await attemptBufferedRound(messages, env);
-      if (looksLikeLeakedToolCall(firstResult.bufferedTokens.join(''))) {
-        const fallbackMessage = language === 'en'
-          ? 'I ran into a problem answering that. Could you rephrase your question?'
-          : 'Tuve un problema respondiendo eso. ¿Podés reformular la pregunta?';
-        return replayBufferedAsSSE([fallbackMessage], request);
-      }
-    }
+    firstResult = await bufferedRoundWithLeakRetry(messages, env, BGG_TOOL_DEFINITIONS);
   } catch (e) {
     return sseError(request, e.message);
+  }
+
+  if (firstResult === null) {
+    return replayBufferedAsSSE([fallbackMessage(language)], request);
   }
 
   if (firstResult.finishReason !== 'tool_calls' || firstResult.toolCalls.length === 0) {
@@ -267,11 +279,18 @@ async function runChatCompletion(messages, env, request, language = 'es') {
     ...toolMessages,
   ];
 
+  let secondResult;
   try {
-    return await streamDeepSeek(followUp, env.DEEPSEEK_API_KEY, request);
+    secondResult = await bufferedRoundWithLeakRetry(followUp, env, undefined);
   } catch (e) {
     return sseError(request, e.message);
   }
+
+  if (secondResult === null) {
+    return replayBufferedAsSSE([fallbackMessage(language)], request);
+  }
+
+  return replayBufferedAsSSE(secondResult.bufferedTokens, request);
 }
 
 async function handleGetGames(request, env) {
