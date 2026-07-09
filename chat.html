@@ -118,6 +118,9 @@
     .cursor { display: inline-block; animation: blink 0.8s step-end infinite; }
     @keyframes blink { 50% { opacity: 0; } }
 
+    .status-label { color: #777; font-style: italic; }
+    .stall-note { color: #999; font-size: 13px; margin-top: 4px; font-style: italic; }
+
     .game-selector-bar {
       padding: 10px 16px;
       background: #fff;
@@ -227,6 +230,23 @@
   let history = [];
   let streaming = false;
 
+  const STATUS_LABELS = {
+    es: {
+      thinking:  '💭 Pensando...',
+      searching: '🔍 Buscando en BoardGameGeek...',
+      details:   '📖 Consultando detalles del juego...',
+      forum:     '💬 Revisando foros de BoardGameGeek...',
+      writing:   '✍️ Escribiendo respuesta...',
+    },
+    en: {
+      thinking:  '💭 Thinking...',
+      searching: '🔍 Searching BoardGameGeek...',
+      details:   '📖 Looking up game details...',
+      forum:     '💬 Checking BoardGameGeek forums...',
+      writing:   '✍️ Writing the answer...',
+    },
+  };
+
   // ── Language toggle ────────────────────────────────────────────────────────
   function setLanguage(lang) {
     currentLanguage = lang;
@@ -290,7 +310,7 @@
     const container = document.getElementById('chat-container');
     const div = document.createElement('div');
     div.className = 'message assistant';
-    div.innerHTML = '<span class="cursor">▋</span>';
+    div.innerHTML = `<span class="status-label">${STATUS_LABELS[currentLanguage].thinking}</span>`;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
     return div;
@@ -336,6 +356,23 @@
 
     const streamDiv = addStreamingMessage();
     let fullText = '';
+    let lastEventTime = Date.now();
+
+    const stallInterval = setInterval(() => {
+      if (fullText !== '') return;
+      const elapsed = Math.floor((Date.now() - lastEventTime) / 1000);
+      if (elapsed < 8) return;
+      const label = currentLanguage === 'en'
+        ? `This is taking longer than usual (${elapsed}s)...`
+        : `Esto está tardando más de lo usual (${elapsed}s)...`;
+      let stallEl = streamDiv.querySelector('.stall-note');
+      if (!stallEl) {
+        stallEl = document.createElement('div');
+        stallEl.className = 'stall-note';
+        streamDiv.appendChild(stallEl);
+      }
+      stallEl.textContent = label;
+    }, 1000);
 
     try {
       const res = await fetch(`${WORKER_URL}/api/chat`, {
@@ -367,6 +404,7 @@
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
           if (data === '[DONE]') {
+            clearInterval(stallInterval);
             streamDiv.innerHTML = renderMarkdown(fullText);
             history.push({ role: 'user', content: userText });
             history.push({ role: 'assistant', content: fullText });
@@ -376,12 +414,20 @@
           try {
             const parsed = JSON.parse(data);
             if (parsed.error) {
+              clearInterval(stallInterval);
               streamDiv.className = 'message error';
               streamDiv.textContent = parsed.error;
               finished = true;
               break;
             }
+            if (parsed.status) {
+              lastEventTime = Date.now();
+              const label = (STATUS_LABELS[currentLanguage] && STATUS_LABELS[currentLanguage][parsed.status])
+                || STATUS_LABELS[currentLanguage].thinking;
+              streamDiv.innerHTML = `<span class="status-label">${label}</span>`;
+            }
             if (parsed.token) {
+              lastEventTime = Date.now();
               fullText += parsed.token;
               streamDiv.innerHTML = renderMarkdown(fullText) + '<span class="cursor">▋</span>';
               document.getElementById('chat-container').scrollTop =
@@ -391,6 +437,7 @@
         }
       }
     } catch (e) {
+      clearInterval(stallInterval);
       streamDiv.className = 'message error';
       streamDiv.innerHTML = 'Error al conectar con el asistente. Intenta de nuevo.';
     }
