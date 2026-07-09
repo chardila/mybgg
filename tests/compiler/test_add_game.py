@@ -43,9 +43,10 @@ def test_main_with_pdf_url_uses_pdf_manual_source(tmp_path):
         patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
         patch("compiler.add_game.extract_text", return_value="Rules text"),
         patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
         patch("compiler.add_game.write_game") as mock_write,
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GAMECACHE_BGG_TOKEN": "bgg-token"}),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key", "GAMECACHE_BGG_TOKEN": "bgg-token"}),
     ):
         from compiler.add_game import main
         main(bgg_id=237182, pdf_url="https://example.com/root.pdf",
@@ -56,13 +57,33 @@ def test_main_with_pdf_url_uses_pdf_manual_source(tmp_path):
     assert write_args[5] == "https://example.com/root.pdf"
 
 
+def test_main_with_pdf_url_passes_pdf_bytes_to_compile_game(tmp_path):
+    with (
+        patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF-fake-bytes"),
+        patch("compiler.add_game.extract_text", return_value="Rules text"),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])) as mock_compile,
+        patch("compiler.add_game.write_game"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key", "GAMECACHE_BGG_TOKEN": "bgg-token"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url="https://example.com/root.pdf",
+             status="owned", wiki_path=str(tmp_path))
+
+    compile_args = mock_compile.call_args[0]
+    assert compile_args[2] == b"%PDF-fake-bytes"
+
+
 def test_main_with_llm_only_path_passes_none_rulebook(tmp_path):
     with (
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
         patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])) as mock_compile,
         patch("compiler.add_game.write_game") as mock_write,
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key"}),
     ):
         from compiler.add_game import main
         main(bgg_id=237182, pdf_url=None, edition="2023 Edition",
@@ -70,6 +91,7 @@ def test_main_with_llm_only_path_passes_none_rulebook(tmp_path):
 
     compile_args = mock_compile.call_args[0]
     assert compile_args[1] is None  # rulebook_text is None
+    assert compile_args[2] is None  # pdf_bytes is None
     write_args = mock_write.call_args[0]
     assert write_args[4] == "llm-only"
     assert write_args[5] is None  # no resolved_url
@@ -79,7 +101,8 @@ def test_main_exits_when_no_pdf_url_and_no_edition(tmp_path):
     with (
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
         patch("compiler.add_game.DeepSeekProvider"),
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
+        patch("compiler.add_game.GeminiProvider"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key"}),
     ):
         from compiler.add_game import main
         with pytest.raises(SystemExit) as exc:
@@ -99,9 +122,10 @@ def test_main_slug_includes_edition_from_year(tmp_path):
         patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
         patch("compiler.add_game.extract_text", return_value="Rules"),
         patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
         patch("compiler.add_game.write_game", side_effect=capture_write),
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
     ):
         from compiler.add_game import main
         main(bgg_id=237182, pdf_url="https://example.com/root.pdf",
@@ -117,7 +141,8 @@ def test_main_exits_when_pdf_extracts_no_text(tmp_path):
         patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
         patch("compiler.add_game.extract_text", return_value=""),
         patch("compiler.add_game.DeepSeekProvider"),
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key"}),
+        patch("compiler.add_game.GeminiProvider"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key"}),
     ):
         from compiler.add_game import main
         with pytest.raises(SystemExit) as exc:
@@ -134,9 +159,10 @@ def test_main_slug_uses_edition_override(tmp_path):
     with (
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
         patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
         patch("compiler.add_game.write_game", side_effect=capture_write),
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
     ):
         from compiler.add_game import main
         main(bgg_id=237182, pdf_url=None, status="owned",
@@ -200,7 +226,8 @@ def test_main_expansion_exits_when_base_game_not_in_wiki(tmp_path):
         patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
         patch("compiler.add_game.extract_text", return_value="Rules"),
         patch("compiler.add_game.DeepSeekProvider"),
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+        patch("compiler.add_game.GeminiProvider"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
     ):
         from compiler.add_game import main
         with pytest.raises(SystemExit) as exc:
@@ -225,9 +252,10 @@ def test_main_expansion_sets_base_game_fields_in_game_data(tmp_path):
         patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
         patch("compiler.add_game.extract_text", return_value="Rules"),
         patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
         patch("compiler.add_game.compile_game", side_effect=capture_compile),
         patch("compiler.add_game.write_game"),
-        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k"}),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
     ):
         from compiler.add_game import main
         main(bgg_id=161936, pdf_url="https://example.com/exp.pdf",

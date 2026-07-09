@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from compiler.bgg_fetcher import fetch_game, _to_slug
 from compiler.pdf_fetcher import fetch_pdf
 from compiler.pdf_parser import extract_text
-from compiler.llm_provider import DeepSeekProvider
+from compiler.llm_provider import DeepSeekProvider, GeminiProvider
 from compiler.llm_compiler import compile_game
 from compiler.wiki_writer import write_game
 
@@ -42,8 +42,10 @@ def main(
 ) -> None:
     bgg_token = os.environ.get("GAMECACHE_BGG_TOKEN")
     deepseek_key = os.environ["DEEPSEEK_API_KEY"]
+    gemini_key = os.environ["GEMINI_API_KEY"]
 
     provider = DeepSeekProvider(api_key=deepseek_key)
+    gemini_provider = GeminiProvider(api_key=gemini_key)
 
     print(f"Fetching BGG data for game {bgg_id}...")
     game_data = fetch_game(bgg_id, token=bgg_token)
@@ -80,12 +82,13 @@ def main(
         if not edition:
             print("Error: --edition is required when --pdf_url is not provided.", file=sys.stderr)
             sys.exit(1)
+        pdf_bytes = None
         rulebook_text = None
         source = "llm-only"
         resolved_url = None
 
-    print("Compiling wiki sections (6 LLM calls)...")
-    sections, failures = compile_game(game_data, rulebook_text, provider)
+    print("Compiling wiki sections...")
+    sections, failures = compile_game(game_data, rulebook_text, pdf_bytes, provider, gemini_provider)
 
     if not sections:
         print(f"Error: all sections failed to generate: {failures}")
