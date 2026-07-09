@@ -1,3 +1,4 @@
+import json
 from compiler.llm_provider import LLMProvider
 
 SYSTEM = (
@@ -118,3 +119,72 @@ def compile_game(
             failures.append(section_name)
 
     return sections, failures
+
+
+MAX_RULES_CHAPTERS = 8
+
+
+def _strip_json_fences(raw: str) -> str:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        if text.endswith("```"):
+            text = text[:-3]
+    return text.strip()
+
+
+def plan_rules_outline(rulebook_text: str, provider: LLMProvider) -> list[dict] | None:
+    prompt = (
+        "Given this rulebook text, identify the page ranges that contain CORE RULES "
+        "content (turn structure, actions, combat, scoring, edge cases) — exclude "
+        "setup/component lists, FAQ, and glossary-style content.\n"
+        f"Divide into at most {MAX_RULES_CHAPTERS} logical chapters. Return strict JSON, "
+        "no markdown fences, no commentary:\n"
+        '[{"titulo": "...", "paginas": [start, end]}, ...]\n'
+        "If you cannot confidently identify chapter boundaries, return an empty array.\n\n"
+        f"Rulebook text:\n---\n{rulebook_text}\n---"
+    )
+    try:
+        raw = provider.generate(system="You are a board game rules analyst.", prompt=prompt)
+        chapters = json.loads(_strip_json_fences(raw))
+    except Exception:
+        return None
+
+    if not isinstance(chapters, list) or len(chapters) == 0:
+        return None
+
+    valid = []
+    for chapter in chapters:
+        if not isinstance(chapter, dict):
+            continue
+        pages = chapter.get("paginas")
+        if not (isinstance(pages, list) and len(pages) == 2):
+            continue
+        try:
+            start, end = int(pages[0]), int(pages[1])
+        except (TypeError, ValueError):
+            continue
+        if start < 1 or end < start:
+            continue
+        valid.append({"titulo": chapter.get("titulo") or "Rules", "paginas": [start, end]})
+
+    if not valid:
+        return None
+
+    return _merge_chapters_to_cap(valid, MAX_RULES_CHAPTERS)
+
+
+def _merge_chapters_to_cap(chapters: list[dict], cap: int) -> list[dict]:
+    chapters = list(chapters)
+    while len(chapters) > cap:
+        best_i = min(
+            range(len(chapters) - 1),
+            key=lambda i: chapters[i + 1]["paginas"][1] - chapters[i]["paginas"][0],
+        )
+        a, b = chapters[best_i], chapters[best_i + 1]
+        merged = {
+            "titulo": f"{a['titulo']} / {b['titulo']}",
+            "paginas": [a["paginas"][0], b["paginas"][1]],
+        }
+        chapters[best_i : best_i + 2] = [merged]
+    return chapters
