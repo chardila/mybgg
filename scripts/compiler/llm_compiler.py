@@ -1,5 +1,6 @@
 import json
 from compiler.llm_provider import LLMProvider
+from compiler.pdf_slicer import slice_pages
 
 SYSTEM = (
     "You are a board game knowledge compiler. "
@@ -7,6 +8,11 @@ SYSTEM = (
     "Use [[Wiki Link]] syntax for cross-references to mechanics, concepts, and game-specific terms. "
     "Write in English. Be concise and precise. Do not include YAML frontmatter."
 )
+
+MAX_RULES_CHAPTERS = 8
+
+SECTION_ORDER = ["index", "setup", "rules", "teaching", "faq", "glossary"]
+
 
 def _rulebook_block(rulebook_text: str | None, game_data: dict) -> str:
     if rulebook_text:
@@ -61,6 +67,9 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "1. Complete components list\n"
             "2. Step-by-step setup instructions (numbered)\n"
             "3. Setup variations by player count (if any)\n"
+            "If component photos or setup diagrams are visible in the provided material, "
+            "translate them into structured Markdown (numbered steps, descriptive lists) "
+            "rather than describing that an image exists.\n"
             "Use [[term]] syntax for game-specific components."
         ),
         "rules": (
@@ -102,26 +111,25 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
     }
 
 
-def compile_game(
-    game_data: dict,
-    rulebook_text: str | None,
-    provider: LLMProvider,
-) -> tuple[dict[str, str], list[str]]:
-    prompts = _prompts(game_data, rulebook_text)
-    sections: dict[str, str] = {}
-    failures: list[str] = []
-
-    for section_name, prompt in prompts.items():
-        try:
-            sections[section_name] = provider.generate(system=SYSTEM, prompt=prompt)
-        except Exception as e:
-            print(f"Warning: failed to generate '{section_name}': {e}")
-            failures.append(section_name)
-
-    return sections, failures
-
-
-MAX_RULES_CHAPTERS = 8
+def _rules_chapter_prompt(game_data: dict, chapter: dict) -> str:
+    name = game_data["name"]
+    ex = _expansion_block(game_data)
+    return (
+        f"{ex}Write the \"{chapter['titulo']}\" section of the Markdown rules reference "
+        f"for \"{name}\".\n\n"
+        "The attached PDF pages are the authoritative source for this section. Translate "
+        "diagrams, component illustrations, and example-of-play images into structured "
+        "Markdown text (numbered steps, descriptive lists, or a blockquote example) rather "
+        "than describing that an image exists.\n\n"
+        "Include:\n"
+        "1. Turn structure and core mechanics covered in these pages\n"
+        "2. Special rules and edge cases shown or stated here\n"
+        "3. Any end-game or scoring rules covered in these pages\n"
+        "Use [[term]] syntax for game-specific terms. Write only what these pages contain "
+        "— do not repeat content that belongs to other chapters.\n"
+        "Do not include a top-level page title (no '# Rules') — start directly with a "
+        "'##' heading using this chapter's title."
+    )
 
 
 def _strip_json_fences(raw: str) -> str:
@@ -188,3 +196,97 @@ def _merge_chapters_to_cap(chapters: list[dict], cap: int) -> list[dict]:
         }
         chapters[best_i : best_i + 2] = [merged]
     return chapters
+
+
+def _compile_rules(
+    game_data: dict,
+    rulebook_text: str | None,
+    pdf_bytes: bytes | None,
+    fallback_prompt: str,
+    deepseek_provider: LLMProvider,
+    gemini_provider: LLMProvider,
+    sections: dict[str, str],
+    failures: list[str],
+) -> None:
+    if rulebook_text and pdf_bytes:
+        outline = plan_rules_outline(rulebook_text, gemini_provider)
+        if outline:
+            chapter_texts = []
+            for chapter in outline:
+                try:
+                    pdf_slice = slice_pages(pdf_bytes, [tuple(chapter["paginas"])])
+                    chapter_prompt = _rules_chapter_prompt(game_data, chapter)
+                    chapter_texts.append(
+                        gemini_provider.generate_multimodal(SYSTEM, chapter_prompt, pdf_slice)
+                    )
+                except Exception as e:
+                    print(f"Warning: failed to generate rules chapter '{chapter['titulo']}': {e}")
+                    failures.append(f"rules (chapter: {chapter['titulo']})")
+            if chapter_texts:
+                sections["rules"] = "\n\n".join(chapter_texts)
+            else:
+                failures.append("rules")
+            return
+
+    try:
+        sections["rules"] = deepseek_provider.generate(system=SYSTEM, prompt=fallback_prompt)
+    except Exception as e:
+        print(f"Warning: failed to generate 'rules': {e}")
+        failures.append("rules")
+
+
+def _compile_setup(
+    pdf_bytes: bytes | None,
+    prompt: str,
+    deepseek_provider: LLMProvider,
+    gemini_provider: LLMProvider,
+    sections: dict[str, str],
+    failures: list[str],
+) -> None:
+    if pdf_bytes:
+        try:
+            sections["setup"] = gemini_provider.generate_multimodal(SYSTEM, prompt, pdf_bytes)
+        except Exception as e:
+            print(f"Warning: failed to generate 'setup': {e}")
+            failures.append("setup")
+        return
+
+    try:
+        sections["setup"] = deepseek_provider.generate(system=SYSTEM, prompt=prompt)
+    except Exception as e:
+        print(f"Warning: failed to generate 'setup': {e}")
+        failures.append("setup")
+
+
+def compile_game(
+    game_data: dict,
+    rulebook_text: str | None,
+    pdf_bytes: bytes | None,
+    deepseek_provider: LLMProvider,
+    gemini_provider: LLMProvider,
+) -> tuple[dict[str, str], list[str]]:
+    prompts = _prompts(game_data, rulebook_text)
+    sections: dict[str, str] = {}
+    failures: list[str] = []
+
+    for section_name in SECTION_ORDER:
+        if section_name == "rules":
+            _compile_rules(
+                game_data, rulebook_text, pdf_bytes, prompts["rules"],
+                deepseek_provider, gemini_provider, sections, failures,
+            )
+        elif section_name == "setup":
+            _compile_setup(
+                pdf_bytes, prompts["setup"], deepseek_provider, gemini_provider,
+                sections, failures,
+            )
+        else:
+            try:
+                sections[section_name] = deepseek_provider.generate(
+                    system=SYSTEM, prompt=prompts[section_name]
+                )
+            except Exception as e:
+                print(f"Warning: failed to generate '{section_name}': {e}")
+                failures.append(section_name)
+
+    return sections, failures
