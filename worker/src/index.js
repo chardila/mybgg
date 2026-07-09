@@ -58,6 +58,24 @@ SOURCE: Always indicate where your answer comes from:
   },
 };
 
+function minimizeGame(game, isNested = false) {
+  const out = {
+    name: game.name,
+    players: game.players,
+    weight: game.weight,
+    mechanics: game.mechanics,
+    categories: game.categories,
+    status: game.status,
+  };
+  if (!isNested) {
+    out.rank = game.rank;
+    if (game.expansions?.length) {
+      out.expansions = game.expansions.map((e) => minimizeGame(e, true));
+    }
+  }
+  return out;
+}
+
 function sseError(request, message, status = 200) {
   return new Response(
     `data: ${JSON.stringify({ error: message })}\n\ndata: [DONE]\n\n`,
@@ -479,9 +497,10 @@ async function handleChat(request, env) {
   let systemContent;
 
   if (mode === 'discovery') {
-    const catalog = (await env.WIKI.get('catalog')) || '[]';
+    const catalogRaw = (await env.WIKI.get('catalog')) || '[]';
+    const minimizedCatalog = JSON.parse(catalogRaw).map((g) => minimizeGame(g));
     const systemBase = SYSTEM_PROMPTS.discovery[language] ?? SYSTEM_PROMPTS.discovery.es;
-    systemContent = `${systemBase}\n\nUser's game catalog (JSON):\n${catalog}`;
+    systemContent = `${systemBase}\n\nUser's game catalog (JSON):\n${JSON.stringify(minimizedCatalog)}`;
   } else if (mode === 'deep_dive' && game) {
     if (!/^[a-z0-9-]+$/.test(game)) {
       return sseError(request, 'Invalid game slug.');
@@ -556,4 +575,4 @@ export default {
   },
 };
 
-export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, runChatCompletion, statusForToolCalls };
+export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, runChatCompletion, statusForToolCalls, minimizeGame };
