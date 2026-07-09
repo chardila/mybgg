@@ -442,6 +442,7 @@
       streamDiv.innerHTML = 'Error al conectar con el asistente. Intenta de nuevo.';
     }
 
+    clearInterval(stallInterval);
     streaming = false;
     document.getElementById('send-btn').disabled = false;
     const input = document.getElementById('message-input');

@@ -154,7 +154,7 @@ async function runChatCompletion(messages, env, request, language = 'es') {
 
 `runChatCompletionStream` keeps the exact same control flow that exists today (the `MAX_TOOL_ROUNDS` loop, `attemptBufferedRoundWithRetry`, `executeToolCalls`, `toolCallsAssistantMessage`, `noMoreToolsNote`, the DeepSeek synthesis call) — the only additions are `await write(sseStatusFormat('thinking'))` before each Gemini call in the loop, and `await write(sseStatusFormat(statusForToolCalls(toolCalls)))` right before `executeToolCalls`, and `await write(sseStatusFormat('writing'))` before the final DeepSeek call. Every place that currently does `return replayBufferedAsSSE(tokens, request)` becomes `for (const t of tokens) await write(sseFormat(t)); return;`. Every place that currently does `return sseError(request, e.message)` becomes `await write(sseErrorFormat(e.message)); return;`.
 
-`replayBufferedAsSSE` and `sseError` remain unchanged and in use elsewhere (`handleChat`'s pre-flight validation, rate limiting) — they are not called from inside `runChatCompletionStream` anymore, only the raw `write`-based equivalents are.
+`sseError` remains unchanged and in use elsewhere (`handleChat`'s pre-flight validation, rate limiting) — it is not called from inside `runChatCompletionStream` anymore, only the raw `write`-based equivalent (`sseErrorFormat`) is. `replayBufferedAsSSE` lost all of its call sites during this refactor and was removed as dead code.
 
 ### `chat.html`
 

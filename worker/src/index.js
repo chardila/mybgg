@@ -202,28 +202,6 @@ async function streamDeepSeek(messages, apiKey, request) {
   });
 }
 
-function replayBufferedAsSSE(tokens, request) {
-  const { readable, writable } = new TransformStream();
-  const writer = writable.getWriter();
-  const encoder = new TextEncoder();
-
-  (async () => {
-    for (const token of tokens) {
-      await writer.write(encoder.encode(sseFormat(token)));
-    }
-    await writer.write(encoder.encode('data: [DONE]\n\n'));
-    writer.close();
-  })();
-
-  return new Response(readable, {
-    headers: {
-      ...getCorsHeaders(request),
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-    },
-  });
-}
-
 async function attemptBufferedRound(messages, callFn, roundLabel) {
   const bufferedTokens = [];
   const response = await callFn(messages);
@@ -570,4 +548,4 @@ export default {
   },
 };
 
-export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, replayBufferedAsSSE, runChatCompletion, statusForToolCalls };
+export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, runChatCompletion, statusForToolCalls };
