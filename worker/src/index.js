@@ -76,6 +76,16 @@ function minimizeGame(game, isNested = false) {
   return out;
 }
 
+function parseCatalog(catalogRaw) {
+  let catalog;
+  try {
+    catalog = JSON.parse(catalogRaw);
+  } catch {
+    catalog = [];
+  }
+  return Array.isArray(catalog) ? catalog : [];
+}
+
 function sseError(request, message, status = 200) {
   return new Response(
     `data: ${JSON.stringify({ error: message })}\n\ndata: [DONE]\n\n`,
@@ -498,7 +508,8 @@ async function handleChat(request, env) {
 
   if (mode === 'discovery') {
     const catalogRaw = (await env.WIKI.get('catalog')) || '[]';
-    const minimizedCatalog = JSON.parse(catalogRaw).map((g) => minimizeGame(g));
+    const catalog = parseCatalog(catalogRaw);
+    const minimizedCatalog = catalog.map((g) => minimizeGame(g));
     const systemBase = SYSTEM_PROMPTS.discovery[language] ?? SYSTEM_PROMPTS.discovery.es;
     systemContent = `${systemBase}\n\nUser's game catalog (JSON):\n${JSON.stringify(minimizedCatalog)}`;
   } else if (mode === 'deep_dive' && game) {
@@ -575,4 +586,4 @@ export default {
   },
 };
 
-export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, runChatCompletion, statusForToolCalls, minimizeGame };
+export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, runChatCompletion, statusForToolCalls, minimizeGame, parseCatalog };

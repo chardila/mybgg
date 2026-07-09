@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { minimizeGame } from '../src/index.js';
+import { minimizeGame, parseCatalog } from '../src/index.js';
 
 describe('minimizeGame', () => {
   it('keeps only the fields the discovery prompt needs', () => {
@@ -102,5 +102,49 @@ describe('minimizeGame', () => {
 
   it('handles an empty catalog', () => {
     expect([].map((g) => minimizeGame(g))).toEqual([]);
+  });
+});
+
+describe('parseCatalog', () => {
+  it('parses valid JSON array and returns it', () => {
+    const validArray = JSON.stringify([{ name: 'Game 1' }, { name: 'Game 2' }]);
+    const result = parseCatalog(validArray);
+    expect(result).toEqual([{ name: 'Game 1' }, { name: 'Game 2' }]);
+  });
+
+  it('returns empty array for empty JSON array string', () => {
+    const emptyArray = JSON.stringify([]);
+    const result = parseCatalog(emptyArray);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array when JSON is malformed', () => {
+    const malformed = '{ invalid json';
+    const result = parseCatalog(malformed);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array when JSON is valid but not an array (object)', () => {
+    const validObject = JSON.stringify({ games: [] });
+    const result = parseCatalog(validObject);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array when JSON is valid but is null', () => {
+    const nullValue = JSON.stringify(null);
+    const result = parseCatalog(nullValue);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array when JSON is valid but is a string', () => {
+    const stringValue = JSON.stringify('not an array');
+    const result = parseCatalog(stringValue);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array when JSON is valid but is a number', () => {
+    const numberValue = JSON.stringify(42);
+    const result = parseCatalog(numberValue);
+    expect(result).toEqual([]);
   });
 });
