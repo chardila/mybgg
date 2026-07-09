@@ -50,12 +50,13 @@ class GeminiProvider(LLMProvider):
         return self._call(system, parts)
 
     def _call(self, system: str, parts: list[dict]) -> str:
-        url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
         body = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": parts}],
         }
-        response = requests.post(url, json=body, timeout=120)
+        response = requests.post(url, headers=headers, json=body, timeout=120)
         response.raise_for_status()
         data = response.json()
         return data["candidates"][0]["content"]["parts"][0]["text"]

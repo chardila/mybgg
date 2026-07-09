@@ -67,9 +67,6 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "1. Complete components list\n"
             "2. Step-by-step setup instructions (numbered)\n"
             "3. Setup variations by player count (if any)\n"
-            "If component photos or setup diagrams are visible in the provided material, "
-            "translate them into structured Markdown (numbered steps, descriptive lists) "
-            "rather than describing that an image exists.\n"
             "Use [[term]] syntax for game-specific components."
         ),
         "rules": (
@@ -224,9 +221,8 @@ def _compile_rules(
                     failures.append(f"rules (chapter: {chapter['titulo']})")
             if chapter_texts:
                 sections["rules"] = "\n\n".join(chapter_texts)
-            else:
-                failures.append("rules")
-            return
+                return
+            print("Warning: all rules chapters failed, falling back to single-call text generation")
 
     try:
         sections["rules"] = deepseek_provider.generate(system=SYSTEM, prompt=fallback_prompt)
@@ -244,8 +240,13 @@ def _compile_setup(
     failures: list[str],
 ) -> None:
     if pdf_bytes:
+        multimodal_prompt = prompt + (
+            "\nIf component photos or setup diagrams are visible in the provided material, "
+            "translate them into structured Markdown (numbered steps, descriptive lists) "
+            "rather than describing that an image exists."
+        )
         try:
-            sections["setup"] = gemini_provider.generate_multimodal(SYSTEM, prompt, pdf_bytes)
+            sections["setup"] = gemini_provider.generate_multimodal(SYSTEM, multimodal_prompt, pdf_bytes)
         except Exception as e:
             print(f"Warning: failed to generate 'setup': {e}")
             failures.append("setup")

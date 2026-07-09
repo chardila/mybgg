@@ -318,7 +318,7 @@ def test_compile_game_continues_when_one_rules_chapter_fails():
     assert any("Part A" in f for f in failures)
 
 
-def test_compile_game_marks_rules_failed_when_all_chapters_fail():
+def test_compile_game_falls_back_to_text_when_all_rules_chapters_fail():
     pdf_bytes = _make_pdf_bytes(2)
     deepseek_provider = MagicMock()
     deepseek_provider.generate.return_value = "# Text section"
@@ -331,6 +331,24 @@ def test_compile_game_marks_rules_failed_when_all_chapters_fail():
         deepseek_provider=deepseek_provider, gemini_provider=gemini_provider,
     )
 
-    assert "rules" not in sections
-    assert "rules" in failures
+    assert sections["rules"] == "# Text section"  # fell back to DeepSeek text generation
+    assert any("Part A" in f for f in failures)  # chapter failure still recorded
     assert "setup" in failures  # same side_effect exception raised for the setup call too
+
+
+def test_compile_game_rules_survives_out_of_range_page_numbers():
+    pdf_bytes = _make_pdf_bytes(3)
+    deepseek_provider = MagicMock()
+    deepseek_provider.generate.return_value = "# Fallback text rules"
+    gemini_provider = MagicMock()
+    gemini_provider.generate.return_value = json.dumps([
+        {"titulo": "Out of Range", "paginas": [10, 20]},
+    ])
+    gemini_provider.generate_multimodal.return_value = "# Setup content"
+
+    sections, failures = compile_game(
+        GAME_DATA, rulebook_text="Full rulebook text", pdf_bytes=pdf_bytes,
+        deepseek_provider=deepseek_provider, gemini_provider=gemini_provider,
+    )
+
+    assert "rules" in sections

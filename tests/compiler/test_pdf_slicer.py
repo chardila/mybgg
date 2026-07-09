@@ -31,3 +31,17 @@ def test_slice_pages_single_page_range():
     result = slice_pages(pdf_bytes, [(2, 2)])
     reader = PdfReader(io.BytesIO(result))
     assert len(reader.pages) == 1
+
+
+def test_slice_pages_clamps_end_beyond_page_count():
+    pdf_bytes = _make_pdf_bytes(3)
+    result = slice_pages(pdf_bytes, [(1, 10)])
+    reader = PdfReader(io.BytesIO(result))
+    assert len(reader.pages) == 3
+
+
+def test_slice_pages_skips_range_entirely_beyond_page_count():
+    pdf_bytes = _make_pdf_bytes(3)
+    result = slice_pages(pdf_bytes, [(10, 20)])
+    reader = PdfReader(io.BytesIO(result))
+    assert len(reader.pages) == 0

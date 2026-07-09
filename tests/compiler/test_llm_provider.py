@@ -96,6 +96,20 @@ def test_gemini_uses_custom_model():
     assert provider.model == "gemini-custom"
 
 
+def test_gemini_generate_sends_api_key_in_header_not_url():
+    from compiler.llm_provider import GeminiProvider
+    with patch(
+        "compiler.llm_provider.requests.post",
+        return_value=_mock_gemini_response("text"),
+    ) as mock_post:
+        provider = GeminiProvider(api_key="secret-key-123")
+        provider.generate(system="s", prompt="p")
+
+    call = mock_post.call_args
+    assert "secret-key-123" not in call.args[0]
+    assert call.kwargs["headers"]["x-goog-api-key"] == "secret-key-123"
+
+
 def test_gemini_generate_raises_on_http_error():
     from compiler.llm_provider import GeminiProvider
     mock_resp = MagicMock()
