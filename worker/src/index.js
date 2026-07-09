@@ -156,14 +156,15 @@ async function parseDeepSeekStream(response, onToken) {
 
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
-          const existing = toolCallsByIndex.get(tc.index) || {
+          const key = tc.index !== undefined ? tc.index : tc.id;
+          const existing = toolCallsByIndex.get(key) || {
             id: '',
             function: { name: '', arguments: '' },
           };
           if (tc.id) existing.id = tc.id;
           if (tc.function?.name) existing.function.name = tc.function.name;
           if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
-          toolCallsByIndex.set(tc.index, existing);
+          toolCallsByIndex.set(key, existing);
         }
       }
 
@@ -337,7 +338,7 @@ async function runChatCompletionStream(messages, env, language, write) {
       return;
     }
 
-    if (result.finishReason !== 'tool_calls' || result.toolCalls.length === 0) {
+    if (result.toolCalls.length === 0) {
       if (!toolsWereCalled) {
         for (const token of result.bufferedTokens) await write(sseFormat(token));
         return;

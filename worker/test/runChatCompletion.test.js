@@ -42,6 +42,31 @@ const noToolCallSSE = () =>
     JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
   ]);
 
+// Mirrors gemini-3.1-flash-lite's real streaming shape (verified live against the
+// API): each tool call arrives in its own separate delta chunk with NO `index`
+// field on the tool-call item, and the final chunk reports finish_reason "stop"
+// (never "tool_calls") even though tool calls were sent earlier in the stream.
+function geminiStyleToolCallSSE(toolCalls) {
+  return fakeSSEResponse([
+    ...toolCalls.map((tc) =>
+      JSON.stringify({
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              tool_calls: [
+                { id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } },
+              ],
+            },
+          },
+        ],
+      })
+    ),
+    JSON.stringify({ choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: 'stop' }] }),
+  ]);
+}
+
 // Gemini deciding, after seeing tool results, that it doesn't need to call
 // anything else. Content is irrelevant — it's discarded once tools have
 // already been called in an earlier round.
@@ -363,6 +388,64 @@ describe('runChatCompletion', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
+  });
+
+  it('executes a Gemini-3.1-style tool call (finish_reason "stop", no index) and streams the follow-up answer', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        geminiStyleToolCallSSE([{ id: 'HdJfXZaS', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }])
+      )
+      .mockResolvedValueOnce(toolRoundDoneSSE())
+      .mockResolvedValueOnce(
+        fakeSSEResponse([
+          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        ])
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion(
+      [{ role: 'user', content: '¿qué expansiones tiene Wingspan?' }],
+      env,
+      fakeRequest()
+    );
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', { query: 'Wingspan' }, 'bgg-token');
+    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
+    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    const toolMessage = synthesisBody.messages.find((m) => m.role === 'tool');
+    expect(toolMessage.content).toBe(JSON.stringify({ result: [{ id: 1, name: 'Wingspan' }] }));
+    expect(text).toContain('data: {"token":"Encontré Wingspan."}');
+  });
+
+  it('executes two Gemini-3.1-style parallel tool calls (each in its own chunk, no index) without corrupting arguments', async () => {
+    executeBggTool.mockResolvedValue({ result: [] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        geminiStyleToolCallSSE([
+          { id: 'lNwflj2K', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' },
+          { id: 'S2JyKBRj', name: 'bgg_search_game', arguments: '{"query":"Terraforming Mars"}' },
+        ])
+      )
+      .mockResolvedValueOnce(toolRoundDoneSSE())
+      .mockResolvedValueOnce(noToolCallSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion(
+      [{ role: 'user', content: '¿qué me contás de Wingspan y de Terraforming Mars?' }],
+      env,
+      fakeRequest()
+    );
+    await readAllText(response);
+
+    expect(executeBggTool).toHaveBeenCalledTimes(2);
+    expect(executeBggTool).toHaveBeenNthCalledWith(1, 'bgg_search_game', { query: 'Wingspan' }, 'bgg-token');
+    expect(executeBggTool).toHaveBeenNthCalledWith(2, 'bgg_search_game', { query: 'Terraforming Mars' }, 'bgg-token');
   });
 
   it('writes an error frame into the stream when a round fails with a non-retryable error', async () => {
