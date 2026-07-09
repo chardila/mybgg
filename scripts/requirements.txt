@@ -16,12 +16,15 @@ certifi==2026.6.17
     # via
     #   httpcore
     #   httpx
+    #   requests
 cffi==2.0.0
     # via
     #   cryptography
     #   pynacl
 charset-normalizer==3.4.7
-    # via pdfminer-six
+    # via
+    #   pdfminer-six
+    #   requests
 cryptography==48.0.1
     # via
     #   -r requirements.in
@@ -40,6 +43,7 @@ idna==3.18
     # via
     #   anyio
     #   httpx
+    #   requests
 iniconfig==2.3.0
     # via pytest
 jiter==0.16.0
@@ -68,13 +72,13 @@ pygments==2.20.0
     # via pytest
 pynacl==1.6.2
     # via -r requirements.in
-requests==2.33.0
+pypdf==6.14.2
     # via -r requirements.in
-urllib3==2.7.0
-    # via requests
 pypdfium2==5.11.0
     # via pdfplumber
 pytest==9.1.1
+    # via -r requirements.in
+requests==2.33.0
     # via -r requirements.in
 sniffio==1.3.1
     # via openai
@@ -87,9 +91,12 @@ typing==3.7.4.3
 typing-extensions==4.15.0
     # via
     #   anyio
+    #   beautifulsoup4
     #   openai
     #   pydantic
     #   pydantic-core
     #   typing-inspection
 typing-inspection==0.4.2
     # via pydantic
+urllib3==2.7.0
+    # via requests

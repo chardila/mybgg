@@ -6,4 +6,5 @@ requests
 beautifulsoup4
 openai
 pdfplumber
+pypdf
 pytest
