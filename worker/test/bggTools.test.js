@@ -200,6 +200,85 @@ describe('executeBggTool: bgg_get_thread', () => {
     });
   });
 
+  it('strips [quote=user]...[/quote] blocks, including the attribution tag', async () => {
+    const xml = `<?xml version="1.0"?>
+      <thread id="1000" numarticles="1">
+        <subject>Rules question</subject>
+        <link>l</link>
+        <articles>
+          <article id="1" username="user1" link="l" postdate="2026-01-01" editdate="2026-01-01" numedits="0">
+            <subject>Rules question</subject>
+            <body><![CDATA[[quote=user2]You always draw first[/quote]Actually that's wrong, you draw last.]]></body>
+          </article>
+        </articles>
+      </thread>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result } = await executeBggTool('bgg_get_thread', { thread_id: 1000 }, 'tok123');
+
+    expect(result.posts[0].text).toBe("Actually that's wrong, you draw last.");
+  });
+
+  it('strips [q]...[/q] blocks with no attribution', async () => {
+    const xml = `<?xml version="1.0"?>
+      <thread id="1000" numarticles="1">
+        <subject>Rules question</subject>
+        <link>l</link>
+        <articles>
+          <article id="1" username="user1" link="l" postdate="2026-01-01" editdate="2026-01-01" numedits="0">
+            <subject>Rules question</subject>
+            <body><![CDATA[[q]Some earlier post[/q]I agree with this.]]></body>
+          </article>
+        </articles>
+      </thread>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result } = await executeBggTool('bgg_get_thread', { thread_id: 1000 }, 'tok123');
+
+    expect(result.posts[0].text).toBe('I agree with this.');
+  });
+
+  it('truncates posts longer than 1500 characters', async () => {
+    const longText = 'a'.repeat(2000);
+    const xml = `<?xml version="1.0"?>
+      <thread id="1000" numarticles="1">
+        <subject>Long post</subject>
+        <link>l</link>
+        <articles>
+          <article id="1" username="user1" link="l" postdate="2026-01-01" editdate="2026-01-01" numedits="0">
+            <subject>Long post</subject>
+            <body><![CDATA[${longText}]]></body>
+          </article>
+        </articles>
+      </thread>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result } = await executeBggTool('bgg_get_thread', { thread_id: 1000 }, 'tok123');
+
+    expect(result.posts[0].text).toBe(`${'a'.repeat(1500)}…`);
+  });
+
+  it('limits results to the first 10 posts when the thread has more', async () => {
+    const articles = Array.from({ length: 12 }, (_, i) => `
+          <article id="${i}" username="user${i}" link="l" postdate="2026-01-0${(i % 9) + 1}" editdate="2026-01-01" numedits="0">
+            <subject>Re: Long thread</subject>
+            <body><![CDATA[Post number ${i}]]></body>
+          </article>`).join('');
+    const xml = `<?xml version="1.0"?>
+      <thread id="1000" numarticles="12">
+        <subject>Long thread</subject>
+        <link>l</link>
+        <articles>${articles}</articles>
+      </thread>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result } = await executeBggTool('bgg_get_thread', { thread_id: 1000 }, 'tok123');
+
+    expect(result.posts).toHaveLength(10);
+    expect(result.posts[0].text).toBe('Post number 0');
+    expect(result.posts[9].text).toBe('Post number 9');
+  });
+
   it('returns an error when the thread does not exist', async () => {
     const xml = `<?xml version="1.0"?><error><message>Thread not found</message></error>`;
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));

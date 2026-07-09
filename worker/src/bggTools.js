@@ -171,6 +171,19 @@ async function searchForum({ bgg_id, query }, token) {
     .slice(0, 10);
 }
 
+const MAX_THREAD_POSTS = 10;
+const MAX_POST_CHARS = 1500;
+
+function stripQuotes(text) {
+  // BGG supports [q]/[/q] (native) and [quote]/[/quote] (a synonym added later),
+  // both with or without attribution (e.g. [q=user], [quote=user]).
+  return text.replace(/\[(?:q|quote)(?:=[^\]]*)?\]([\s\S]*?)\[\/(?:q|quote)\]/gi, '').trim();
+}
+
+function truncate(text, max) {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 async function getThread({ thread_id }, token) {
   const data = await bggFetch('/thread', { id: thread_id }, token);
   const thread = data.thread;
@@ -179,10 +192,10 @@ async function getThread({ thread_id }, token) {
   return {
     id: Number(thread['@_id']),
     subject: thread.subject,
-    posts: articles.map((article) => ({
+    posts: articles.slice(0, MAX_THREAD_POSTS).map((article) => ({
       author: article['@_username'],
       date: article['@_postdate'],
-      text: typeof article.body === 'string' ? article.body : '',
+      text: truncate(stripQuotes(typeof article.body === 'string' ? article.body : ''), MAX_POST_CHARS),
     })),
   };
 }
