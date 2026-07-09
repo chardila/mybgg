@@ -134,6 +134,18 @@ describe('runChatCompletion', () => {
     expect(extractStatuses(text)).toEqual(['thinking']);
   });
 
+  it('sends gemini-3.1-flash-lite with minimal reasoning effort in round 1', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(noToolCallSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    await readAllText(response);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.model).toBe('gemini-3.1-flash-lite');
+    expect(body.reasoning_effort).toBe('minimal');
+  });
+
   it('executes a requested tool call and streams the follow-up answer', async () => {
     executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
     const mockFetch = vi

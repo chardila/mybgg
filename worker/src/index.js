@@ -99,7 +99,12 @@ async function callDeepSeek(messages, apiKey, { tools } = {}) {
 }
 
 async function callGemini(messages, apiKey, { tools } = {}) {
-  const body = { model: 'gemini-2.5-flash-lite', messages, stream: true };
+  const body = {
+    model: 'gemini-3.1-flash-lite',
+    messages,
+    stream: true,
+    reasoning_effort: 'minimal',
+  };
   if (tools) body.tools = tools;
 
   const response = await fetch(
