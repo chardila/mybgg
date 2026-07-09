@@ -73,6 +73,10 @@ function sseErrorFormat(message) {
   return `data: ${JSON.stringify({ error: message })}\n\n`;
 }
 
+function sseStatusFormat(status) {
+  return `data: ${JSON.stringify({ status })}\n\n`;
+}
+
 async function callDeepSeek(messages, apiKey, { tools } = {}) {
   const body = { model: 'deepseek-v4-flash', messages, stream: true };
   if (tools) body.tools = tools;
@@ -320,12 +324,24 @@ function noMoreToolsNote(language) {
   };
 }
 
+function statusForToolCalls(toolCalls) {
+  const names = new Set(toolCalls.map((tc) => tc.function.name));
+  if (names.size === 1) {
+    const name = [...names][0];
+    if (name === 'bgg_get_game_details') return 'details';
+    if (name === 'bgg_search_forum' || name === 'bgg_get_thread') return 'forum';
+  }
+  return 'searching';
+}
+
 async function runChatCompletionStream(messages, env, language, write) {
   let currentMessages = messages;
   let toolsWereCalled = false;
   let hitToolRoundCap = false;
 
   for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
+    await write(sseStatusFormat('thinking'));
+
     const result = await attemptBufferedRoundWithRetry(
       currentMessages,
       (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
@@ -348,6 +364,7 @@ async function runChatCompletionStream(messages, env, language, write) {
 
     toolsWereCalled = true;
     const toolCalls = result.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+    await write(sseStatusFormat(statusForToolCalls(toolCalls)));
     const toolMessages = await executeToolCalls(toolCalls, env);
     currentMessages = [...currentMessages, toolCallsAssistantMessage(toolCalls), ...toolMessages];
 
@@ -359,6 +376,8 @@ async function runChatCompletionStream(messages, env, language, write) {
   const synthesisMessages = hitToolRoundCap
     ? [...currentMessages, noMoreToolsNote(language)]
     : currentMessages;
+
+  await write(sseStatusFormat('writing'));
 
   const secondResult = await attemptBufferedRoundWithRetry(
     synthesisMessages,
@@ -551,4 +570,4 @@ export default {
   },
 };
 
-export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, replayBufferedAsSSE, runChatCompletion };
+export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, replayBufferedAsSSE, runChatCompletion, statusForToolCalls };

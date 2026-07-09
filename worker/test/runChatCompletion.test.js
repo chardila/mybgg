@@ -67,6 +67,19 @@ const dsmlLeakSSE = () =>
 const incompleteStreamSSE = () =>
   fakeSSEResponse([JSON.stringify({ choices: [{ index: 0, delta: { content: 'Ho' } }] })]);
 
+function extractStatuses(text) {
+  return [...text.matchAll(/data: (\{.*?\})\n/g)]
+    .map((m) => {
+      try {
+        return JSON.parse(m[1]);
+      } catch {
+        return null;
+      }
+    })
+    .filter((frame) => frame && frame.status)
+    .map((frame) => frame.status);
+}
+
 const env = { DEEPSEEK_API_KEY: 'key123', GEMINI_API_KEY: 'test-gemini-key', BGG_TOKEN: 'bgg-token' };
 
 describe('runChatCompletion', () => {
@@ -118,6 +131,7 @@ describe('runChatCompletion', () => {
     expect(text).toContain('data: {"token":"Hola"}');
     expect(text).toContain('data: [DONE]');
     expect(executeBggTool).not.toHaveBeenCalled();
+    expect(extractStatuses(text)).toEqual(['thinking']);
   });
 
   it('executes a requested tool call and streams the follow-up answer', async () => {
@@ -144,6 +158,7 @@ describe('runChatCompletion', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', { query: 'Wingspan' }, 'bgg-token');
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
+    expect(extractStatuses(text)).toEqual(['thinking', 'searching', 'thinking', 'writing']);
 
     const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
     const toolMessage = synthesisBody.messages.find((m) => m.role === 'tool');
@@ -199,7 +214,7 @@ describe('runChatCompletion', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
-    await readAllText(response);
+    const text = await readAllText(response);
 
     // Two Gemini tool rounds + one DeepSeek synthesis call — never a third Gemini round.
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -207,6 +222,7 @@ describe('runChatCompletion', () => {
     expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
     expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
     expect(executeBggTool).toHaveBeenCalledTimes(2);
+    expect(extractStatuses(text)).toEqual(['thinking', 'searching', 'thinking', 'searching', 'writing']);
 
     const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
     const note = synthesisBody.messages[synthesisBody.messages.length - 1];
