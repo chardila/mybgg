@@ -62,6 +62,7 @@ jobs:
         env:
           GAMECACHE_BGG_TOKEN: ${{ secrets.GAMECACHE_BGG_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BGG_ID: ${{ inputs.bgg_id }}
           PDF_URL: ${{ inputs.pdf_url }}
           EDITION: ${{ inputs.edition }}
