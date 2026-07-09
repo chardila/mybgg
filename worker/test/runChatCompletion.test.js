@@ -67,6 +67,37 @@ function geminiStyleToolCallSSE(toolCalls) {
   ]);
 }
 
+// gemini-3.1-flash-lite's real streaming shape also attaches an
+// `extra_content.google.thought_signature` field on each tool-call item.
+// Gemini's next round rejects a tool_calls history turn that's missing this
+// signature ("Function call is missing a thought_signature"), so it must
+// round-trip through parseDeepSeekStream and toolCallsAssistantMessage.
+function geminiStyleToolCallSSEWithSignature(toolCalls) {
+  return fakeSSEResponse([
+    ...toolCalls.map((tc) =>
+      JSON.stringify({
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  id: tc.id,
+                  type: 'function',
+                  function: { name: tc.name, arguments: tc.arguments },
+                  extra_content: tc.extra_content,
+                },
+              ],
+            },
+          },
+        ],
+      })
+    ),
+    JSON.stringify({ choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: 'stop' }] }),
+  ]);
+}
+
 // Gemini deciding, after seeing tool results, that it doesn't need to call
 // anything else. Content is irrelevant — it's discarded once tools have
 // already been called in an earlier round.
@@ -446,6 +477,74 @@ describe('runChatCompletion', () => {
     expect(executeBggTool).toHaveBeenCalledTimes(2);
     expect(executeBggTool).toHaveBeenNthCalledWith(1, 'bgg_search_game', { query: 'Wingspan' }, 'bgg-token');
     expect(executeBggTool).toHaveBeenNthCalledWith(2, 'bgg_search_game', { query: 'Terraforming Mars' }, 'bgg-token');
+  });
+
+  it('preserves the thought_signature (extra_content) on a Gemini tool call across the round-trip into the next Gemini call', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const signature = {
+      google: {
+        thought_signature:
+          'EjQKMgERTTIP2ZcVzoljqnmkzvkTJjzZF1oiRzvTPngpYeY5AQxsEo8Yk6SdS88/frUdQEE+',
+      },
+    };
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        geminiStyleToolCallSSEWithSignature([
+          {
+            id: 'HdJfXZaS',
+            name: 'bgg_search_game',
+            arguments: '{"query":"Wingspan"}',
+            extra_content: signature,
+          },
+        ])
+      )
+      .mockResolvedValueOnce(noToolCallSSE())
+      .mockResolvedValueOnce(
+        fakeSSEResponse([
+          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        ])
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion(
+      [{ role: 'user', content: '¿qué expansiones tiene Wingspan?' }],
+      env,
+      fakeRequest()
+    );
+    await readAllText(response);
+
+    // Second fetch call is round 2's Gemini call — its request body carries
+    // the round-1 tool call back as history, and must include the signature.
+    expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
+    const round2Body = JSON.parse(mockFetch.mock.calls[1][1].body);
+    const assistantMessage = round2Body.messages.find((m) => m.role === 'assistant' && m.tool_calls);
+    expect(assistantMessage.tool_calls[0].extra_content).toEqual(signature);
+  });
+
+  it('does not add an extra_content key when the tool call had none (DeepSeek-style/gemini-2.5-style)', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }])
+      )
+      .mockResolvedValueOnce(toolRoundDoneSSE())
+      .mockResolvedValueOnce(
+        fakeSSEResponse([
+          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        ])
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
+    await readAllText(response);
+
+    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    const assistantMessage = synthesisBody.messages.find((m) => m.role === 'assistant' && m.tool_calls);
+    expect('extra_content' in assistantMessage.tool_calls[0]).toBe(false);
   });
 
   it('writes an error frame into the stream when a round fails with a non-retryable error', async () => {

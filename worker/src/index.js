@@ -164,6 +164,7 @@ async function parseDeepSeekStream(response, onToken) {
           if (tc.id) existing.id = tc.id;
           if (tc.function?.name) existing.function.name = tc.function.name;
           if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+          if (tc.extra_content) existing.extra_content = tc.extra_content;
           toolCallsByIndex.set(key, existing);
         }
       }
@@ -290,6 +291,7 @@ function toolCallsAssistantMessage(toolCalls) {
       id: tc.id,
       type: 'function',
       function: tc.function,
+      ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
     })),
   };
 }
