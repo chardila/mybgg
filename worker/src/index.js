@@ -69,6 +69,10 @@ function sseFormat(token) {
   return `data: ${JSON.stringify({ token })}\n\n`;
 }
 
+function sseErrorFormat(message) {
+  return `data: ${JSON.stringify({ error: message })}\n\n`;
+}
+
 async function callDeepSeek(messages, apiKey, { tools } = {}) {
   const body = { model: 'deepseek-v4-flash', messages, stream: true };
   if (tools) body.tools = tools;
@@ -316,31 +320,28 @@ function noMoreToolsNote(language) {
   };
 }
 
-async function runChatCompletion(messages, env, request, language = 'es') {
+async function runChatCompletionStream(messages, env, language, write) {
   let currentMessages = messages;
   let toolsWereCalled = false;
   let hitToolRoundCap = false;
 
   for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
-    let result;
-    try {
-      result = await attemptBufferedRoundWithRetry(
-        currentMessages,
-        (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
-        `round 1 (tool round ${round})`,
-        isIncompleteStream
-      );
-    } catch (e) {
-      return sseError(request, e.message);
-    }
+    const result = await attemptBufferedRoundWithRetry(
+      currentMessages,
+      (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
+      `round 1 (tool round ${round})`,
+      isIncompleteStream
+    );
 
     if (result === null) {
-      return replayBufferedAsSSE([fallbackMessage(language)], request);
+      await write(sseFormat(fallbackMessage(language)));
+      return;
     }
 
     if (result.finishReason !== 'tool_calls' || result.toolCalls.length === 0) {
       if (!toolsWereCalled) {
-        return replayBufferedAsSSE(result.bufferedTokens, request);
+        for (const token of result.bufferedTokens) await write(sseFormat(token));
+        return;
       }
       break;
     }
@@ -359,23 +360,45 @@ async function runChatCompletion(messages, env, request, language = 'es') {
     ? [...currentMessages, noMoreToolsNote(language)]
     : currentMessages;
 
-  let secondResult;
-  try {
-    secondResult = await attemptBufferedRoundWithRetry(
-      synthesisMessages,
-      (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
-      'round 2',
-      (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))
-    );
-  } catch (e) {
-    return sseError(request, e.message);
-  }
+  const secondResult = await attemptBufferedRoundWithRetry(
+    synthesisMessages,
+    (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
+    'round 2',
+    (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))
+  );
 
   if (secondResult === null) {
-    return replayBufferedAsSSE([fallbackMessage(language)], request);
+    await write(sseFormat(fallbackMessage(language)));
+    return;
   }
 
-  return replayBufferedAsSSE(secondResult.bufferedTokens, request);
+  for (const token of secondResult.bufferedTokens) await write(sseFormat(token));
+}
+
+async function runChatCompletion(messages, env, request, language = 'es') {
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+  const write = (frame) => writer.write(encoder.encode(frame));
+
+  (async () => {
+    try {
+      await runChatCompletionStream(messages, env, language, write);
+    } catch (e) {
+      await write(sseErrorFormat(e.message));
+    } finally {
+      await write('data: [DONE]\n\n');
+      await writer.close();
+    }
+  })();
+
+  return new Response(readable, {
+    headers: {
+      ...getCorsHeaders(request),
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    },
+  });
 }
 
 async function handleGetGames(request, env) {

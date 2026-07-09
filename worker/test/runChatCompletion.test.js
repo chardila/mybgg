@@ -91,7 +91,8 @@ describe('runChatCompletion', () => {
       );
     vi.stubGlobal('fetch', mockFetch);
 
-    await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
+    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
+    await readAllText(response);
 
     expect(mockFetch.mock.calls[0][0]).toBe(GEMINI_URL);
     expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
@@ -164,7 +165,8 @@ describe('runChatCompletion', () => {
       .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
-    await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    await readAllText(response);
 
     expect(executeBggTool).toHaveBeenCalledTimes(3);
   });
@@ -196,7 +198,8 @@ describe('runChatCompletion', () => {
       .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
-    await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    await readAllText(response);
 
     // Two Gemini tool rounds + one DeepSeek synthesis call — never a third Gemini round.
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -220,7 +223,8 @@ describe('runChatCompletion', () => {
       .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
-    await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    await readAllText(response);
 
     expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', {}, 'bgg-token');
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -331,6 +335,17 @@ describe('runChatCompletion', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
+  });
+
+  it('writes an error frame into the stream when a round fails with a non-retryable error', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(fakeSSEResponse([], { ok: false, status: 500 }));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    const text = await readAllText(response);
+
+    expect(text).toContain('"error":"Gemini API error: 500');
+    expect(text).toContain('data: [DONE]');
   });
 
 });
