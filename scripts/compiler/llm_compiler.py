@@ -291,3 +291,11 @@ def compile_game(
                 failures.append(section_name)
 
     return sections, failures
+
+
+def generate_mechanic_description(name: str, provider: LLMProvider) -> str:
+    prompt = (
+        f"Describe the board game mechanic \"{name}\" in 1-2 sentences, for a personal "
+        "Obsidian wiki. No heading, no frontmatter — plain prose only."
+    )
+    return provider.generate(system=SYSTEM, prompt=prompt)

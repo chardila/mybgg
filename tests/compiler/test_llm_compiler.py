@@ -352,3 +352,16 @@ def test_compile_game_rules_survives_out_of_range_page_numbers():
     )
 
     assert "rules" in sections
+
+
+def test_generate_mechanic_description_returns_text():
+    from compiler.llm_compiler import generate_mechanic_description, SYSTEM
+    provider = MagicMock()
+    provider.generate.return_value = "A mechanic about area control."
+
+    result = generate_mechanic_description("Area Control", provider)
+
+    assert result == "A mechanic about area control."
+    call_kwargs = provider.generate.call_args.kwargs
+    assert "Area Control" in call_kwargs["prompt"]
+    assert call_kwargs["system"] == SYSTEM
