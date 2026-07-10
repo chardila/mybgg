@@ -9,8 +9,8 @@ from compiler.bgg_fetcher import fetch_game, _to_slug
 from compiler.pdf_fetcher import fetch_pdf
 from compiler.pdf_parser import extract_text
 from compiler.llm_provider import DeepSeekProvider, GeminiProvider
-from compiler.llm_compiler import compile_game
-from compiler.wiki_writer import write_game
+from compiler.llm_compiler import compile_game, generate_mechanic_description
+from compiler.wiki_writer import write_game, mechanic_page_exists, sync_mechanic_pages
 
 
 def _resolve_edition(game_data: dict, edition_override: str | None) -> str:
@@ -93,6 +93,19 @@ def main(
     if not sections:
         print(f"Error: all sections failed to generate: {failures}")
         sys.exit(1)
+
+    new_mechanics = [
+        m for m in game_data.get("mechanics", []) if not mechanic_page_exists(wiki_path, m)
+    ]
+    descriptions = {}
+    if new_mechanics:
+        print(f"Generating descriptions for {len(new_mechanics)} new mechanic(s)...")
+    for mechanic in new_mechanics:
+        try:
+            descriptions[mechanic] = generate_mechanic_description(mechanic, provider)
+        except Exception as e:
+            print(f"Warning: failed to generate description for mechanic '{mechanic}': {e}")
+    sync_mechanic_pages(wiki_path, game_data, descriptions)
 
     print(f"Writing wiki files to {wiki_path}/games/{game_data['slug']}/...")
     write_game(game_data, sections, wiki_path, status, source, resolved_url)

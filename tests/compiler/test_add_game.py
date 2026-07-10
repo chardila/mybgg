@@ -44,6 +44,7 @@ def test_main_with_pdf_url_uses_pdf_manual_source(tmp_path):
         patch("compiler.add_game.extract_text", return_value="Rules text"),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
         patch("compiler.add_game.write_game") as mock_write,
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key", "GAMECACHE_BGG_TOKEN": "bgg-token"}),
@@ -64,6 +65,7 @@ def test_main_with_pdf_url_passes_pdf_bytes_to_compile_game(tmp_path):
         patch("compiler.add_game.extract_text", return_value="Rules text"),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])) as mock_compile,
         patch("compiler.add_game.write_game"),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key", "GAMECACHE_BGG_TOKEN": "bgg-token"}),
@@ -81,6 +83,7 @@ def test_main_with_llm_only_path_passes_none_rulebook(tmp_path):
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])) as mock_compile,
         patch("compiler.add_game.write_game") as mock_write,
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fake-key", "GEMINI_API_KEY": "fake-key"}),
@@ -123,6 +126,7 @@ def test_main_slug_includes_edition_from_year(tmp_path):
         patch("compiler.add_game.extract_text", return_value="Rules"),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
         patch("compiler.add_game.write_game", side_effect=capture_write),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
@@ -160,6 +164,7 @@ def test_main_slug_uses_edition_override(tmp_path):
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
         patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
         patch("compiler.add_game.write_game", side_effect=capture_write),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
@@ -253,6 +258,7 @@ def test_main_expansion_sets_base_game_fields_in_game_data(tmp_path):
         patch("compiler.add_game.extract_text", return_value="Rules"),
         patch("compiler.add_game.DeepSeekProvider"),
         patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
         patch("compiler.add_game.compile_game", side_effect=capture_compile),
         patch("compiler.add_game.write_game"),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
@@ -263,3 +269,54 @@ def test_main_expansion_sets_base_game_fields_in_game_data(tmp_path):
 
     assert captured["base_game_slug"] == "pandemic-2008"
     assert captured["base_game_name"] == "Pandemic"
+
+
+# ── mechanic-page orchestration tests ────────────────────────────────────────
+
+def test_main_generates_description_only_for_new_mechanics(tmp_path):
+    (tmp_path / "mechanics").mkdir()
+    (tmp_path / "mechanics" / "Area Control.md").write_text("# Area Control\n\nDesc.\n")
+    game_data = {**GAME_DATA, "mechanics": ["Area Control", "Hand Management"]}
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=game_data.copy()),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
+        patch("compiler.add_game.generate_mechanic_description", return_value="A mechanic.") as mock_desc,
+        patch("compiler.add_game.sync_mechanic_pages") as mock_sync,
+        patch("compiler.add_game.write_game"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url=None, edition="2018",
+             status="owned", wiki_path=str(tmp_path))
+
+    mock_desc.assert_called_once()
+    assert mock_desc.call_args[0][0] == "Hand Management"
+    sync_args = mock_sync.call_args[0]
+    assert sync_args[2] == {"Hand Management": "A mechanic."}
+
+
+def test_main_skips_description_generation_when_all_mechanics_exist(tmp_path):
+    (tmp_path / "mechanics").mkdir()
+    (tmp_path / "mechanics" / "Area Control.md").write_text("# Area Control\n\nDesc.\n")
+    game_data = {**GAME_DATA, "mechanics": ["Area Control"]}
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=game_data.copy()),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
+        patch("compiler.add_game.generate_mechanic_description") as mock_desc,
+        patch("compiler.add_game.sync_mechanic_pages") as mock_sync,
+        patch("compiler.add_game.write_game"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url=None, edition="2018",
+             status="owned", wiki_path=str(tmp_path))
+
+    mock_desc.assert_not_called()
+    sync_args = mock_sync.call_args[0]
+    assert sync_args[2] == {}
