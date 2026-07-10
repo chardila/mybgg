@@ -320,3 +320,24 @@ def test_main_skips_description_generation_when_all_mechanics_exist(tmp_path):
     mock_desc.assert_not_called()
     sync_args = mock_sync.call_args[0]
     assert sync_args[2] == {}
+
+
+def test_main_creates_real_mechanic_page_end_to_end(tmp_path):
+    game_data = {**GAME_DATA, "mechanics": ["Area Control"]}
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=game_data.copy()),
+        patch("compiler.add_game.DeepSeekProvider") as mock_deepseek_cls,
+        patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
+        patch("compiler.add_game.write_game"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
+    ):
+        mock_deepseek_cls.return_value.generate.return_value = "A mechanic about area control."
+        from compiler.add_game import main
+        main(bgg_id=237182, pdf_url=None, edition="2018",
+             status="owned", wiki_path=str(tmp_path))
+
+    content = (tmp_path / "mechanics" / "Area Control.md").read_text()
+    assert "A mechanic about area control." in content
+    assert "[[root-2018]]" in content

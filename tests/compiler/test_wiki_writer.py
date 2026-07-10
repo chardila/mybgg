@@ -337,6 +337,26 @@ def test_sync_mechanic_pages_skips_when_no_description_available(tmp_path):
     assert not (tmp_path / "mechanics" / "Area Control.md").exists()
 
 
+def test_sync_mechanic_pages_sanitizes_slash_in_filename(tmp_path):
+    from compiler.wiki_writer import sync_mechanic_pages
+    game_data = {"slug": "camel-up-2018", "name": "Camel Up", "mechanics": ["Roll / Spin and Move"]}
+
+    sync_mechanic_pages(str(tmp_path), game_data, {"Roll / Spin and Move": "Players roll dice or spin to move."})
+
+    mech_dir = tmp_path / "mechanics"
+    assert (mech_dir / "Roll - Spin and Move.md").exists()
+    content = (mech_dir / "Roll - Spin and Move.md").read_text()
+    assert content.startswith("# Roll / Spin and Move")  # display name preserved as original
+
+
+def test_mechanic_page_exists_checks_sanitized_filename(tmp_path):
+    from compiler.wiki_writer import mechanic_page_exists
+    mech_dir = tmp_path / "mechanics"
+    mech_dir.mkdir()
+    (mech_dir / "Roll - Spin and Move.md").write_text("# Roll / Spin and Move\n")
+    assert mechanic_page_exists(str(tmp_path), "Roll / Spin and Move") is True
+
+
 def test_git_commit_and_push_adds_mechanics_dir_when_present(tmp_path):
     from compiler.wiki_writer import _git_commit_and_push
     (tmp_path / "games" / "root").mkdir(parents=True)

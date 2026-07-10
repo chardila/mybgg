@@ -145,8 +145,12 @@ def _git(wiki_path: str, *args: str) -> None:
     subprocess.run(["git", "-C", wiki_path, *args], check=True, capture_output=True)
 
 
+def _mechanic_filename(mechanic: str) -> str:
+    return mechanic.replace("/", "-").replace("\\", "-") + ".md"
+
+
 def mechanic_page_exists(wiki_path: str, mechanic: str) -> bool:
-    return (Path(wiki_path) / "mechanics" / f"{mechanic}.md").exists()
+    return (Path(wiki_path) / "mechanics" / _mechanic_filename(mechanic)).exists()
 
 
 def sync_mechanic_pages(
@@ -155,7 +159,7 @@ def sync_mechanic_pages(
     descriptions: dict[str, str],
 ) -> None:
     for mechanic in game_data.get("mechanics", []):
-        page_path = Path(wiki_path) / "mechanics" / f"{mechanic}.md"
+        page_path = Path(wiki_path) / "mechanics" / _mechanic_filename(mechanic)
         entry = f"* [[{game_data['slug']}]] — {game_data['name']}"
         if page_path.exists():
             content = page_path.read_text()
@@ -165,7 +169,7 @@ def sync_mechanic_pages(
         elif mechanic in descriptions:
             page_path.parent.mkdir(parents=True, exist_ok=True)
             page_path.write_text(
-                f"# {mechanic}\n\n{descriptions[mechanic]}\n\n"
+                f"# {mechanic}\n\n{descriptions[mechanic].strip()}\n\n"
                 f"## Juegos en tu catálogo que la usan:\n{entry}\n"
             )
         # else: no page yet and no description available (generation failed) — skip this run
