@@ -257,3 +257,104 @@ def test_build_frontmatter_does_not_crash_when_expansion_has_no_inbound_link():
     fm = _build_frontmatter(game_data, "owned", "pdf-manual", None)
     assert "base_game_bgg_id" not in fm
     assert "base_game_slug" not in fm
+
+
+def test_mechanic_page_exists_false_when_missing(tmp_path):
+    from compiler.wiki_writer import mechanic_page_exists
+    assert mechanic_page_exists(str(tmp_path), "Area Control") is False
+
+
+def test_mechanic_page_exists_true_when_present(tmp_path):
+    from compiler.wiki_writer import mechanic_page_exists
+    mech_dir = tmp_path / "mechanics"
+    mech_dir.mkdir()
+    (mech_dir / "Area Control.md").write_text("# Area Control\n")
+    assert mechanic_page_exists(str(tmp_path), "Area Control") is True
+
+
+def test_sync_mechanic_pages_creates_new_page(tmp_path):
+    from compiler.wiki_writer import sync_mechanic_pages
+    game_data = {"slug": "root-2018", "name": "Root", "mechanics": ["Area Control"]}
+
+    sync_mechanic_pages(str(tmp_path), game_data, {"Area Control": "A mechanic about map control."})
+
+    content = (tmp_path / "mechanics" / "Area Control.md").read_text()
+    assert content.startswith("# Area Control")
+    assert "A mechanic about map control." in content
+    assert "[[root-2018]] — Root" in content
+
+
+def test_sync_mechanic_pages_appends_backlink_to_existing_page(tmp_path):
+    from compiler.wiki_writer import sync_mechanic_pages
+    mech_dir = tmp_path / "mechanics"
+    mech_dir.mkdir()
+    (mech_dir / "Area Control.md").write_text(
+        "# Area Control\n\nDescription.\n\n## Juegos en tu catálogo que la usan:\n* [[scythe-2016]] — Scythe\n"
+    )
+    game_data = {"slug": "root-2018", "name": "Root", "mechanics": ["Area Control"]}
+
+    sync_mechanic_pages(str(tmp_path), game_data, {})
+
+    content = (mech_dir / "Area Control.md").read_text()
+    assert "[[scythe-2016]] — Scythe" in content
+    assert "[[root-2018]] — Root" in content
+
+
+def test_sync_mechanic_pages_does_not_duplicate_backlink(tmp_path):
+    from compiler.wiki_writer import sync_mechanic_pages
+    mech_dir = tmp_path / "mechanics"
+    mech_dir.mkdir()
+    (mech_dir / "Area Control.md").write_text(
+        "# Area Control\n\nDescription.\n\n## Juegos en tu catálogo que la usan:\n* [[root-2018]] — Root\n"
+    )
+    game_data = {"slug": "root-2018", "name": "Root", "mechanics": ["Area Control"]}
+
+    sync_mechanic_pages(str(tmp_path), game_data, {})
+
+    content = (mech_dir / "Area Control.md").read_text()
+    assert content.count("[[root-2018]]") == 1
+
+
+def test_sync_mechanic_pages_handles_multiple_mechanics(tmp_path):
+    from compiler.wiki_writer import sync_mechanic_pages
+    game_data = {"slug": "root-2018", "name": "Root", "mechanics": ["Area Control", "Hand Management"]}
+
+    sync_mechanic_pages(
+        str(tmp_path), game_data,
+        {"Area Control": "Desc A.", "Hand Management": "Desc B."},
+    )
+
+    assert (tmp_path / "mechanics" / "Area Control.md").exists()
+    assert (tmp_path / "mechanics" / "Hand Management.md").exists()
+
+
+def test_sync_mechanic_pages_skips_when_no_description_available(tmp_path):
+    from compiler.wiki_writer import sync_mechanic_pages
+    game_data = {"slug": "root-2018", "name": "Root", "mechanics": ["Area Control"]}
+
+    sync_mechanic_pages(str(tmp_path), game_data, {})  # no description generated for it
+
+    assert not (tmp_path / "mechanics" / "Area Control.md").exists()
+
+
+def test_git_commit_and_push_adds_mechanics_dir_when_present(tmp_path):
+    from compiler.wiki_writer import _git_commit_and_push
+    (tmp_path / "games" / "root").mkdir(parents=True)
+    (tmp_path / "mechanics").mkdir()
+
+    with patch("compiler.wiki_writer._git") as mock_git:
+        _git_commit_and_push(str(tmp_path), "root", "Root")
+
+    added_paths = [c.args[2] for c in mock_git.call_args_list if c.args[1] == "add"]
+    assert "mechanics/" in added_paths
+
+
+def test_git_commit_and_push_skips_mechanics_dir_when_absent(tmp_path):
+    from compiler.wiki_writer import _git_commit_and_push
+    (tmp_path / "games" / "root").mkdir(parents=True)
+
+    with patch("compiler.wiki_writer._git") as mock_git:
+        _git_commit_and_push(str(tmp_path), "root", "Root")
+
+    added_paths = [c.args[2] for c in mock_git.call_args_list if c.args[1] == "add"]
+    assert "mechanics/" not in added_paths

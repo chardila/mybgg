@@ -128,6 +128,8 @@ def _git_commit_and_push(
     _git(wiki_path, "add", f"games/{slug}/")
     if base_game_slug:
         _git(wiki_path, "add", f"games/{base_game_slug}/index.md")
+    if (Path(wiki_path) / "mechanics").exists():
+        _git(wiki_path, "add", "mechanics/")
     result = subprocess.run(
         ["git", "-C", wiki_path, "diff", "--cached", "--quiet"],
         capture_output=True,
@@ -141,3 +143,29 @@ def _git_commit_and_push(
 
 def _git(wiki_path: str, *args: str) -> None:
     subprocess.run(["git", "-C", wiki_path, *args], check=True, capture_output=True)
+
+
+def mechanic_page_exists(wiki_path: str, mechanic: str) -> bool:
+    return (Path(wiki_path) / "mechanics" / f"{mechanic}.md").exists()
+
+
+def sync_mechanic_pages(
+    wiki_path: str,
+    game_data: dict,
+    descriptions: dict[str, str],
+) -> None:
+    for mechanic in game_data.get("mechanics", []):
+        page_path = Path(wiki_path) / "mechanics" / f"{mechanic}.md"
+        entry = f"* [[{game_data['slug']}]] — {game_data['name']}"
+        if page_path.exists():
+            content = page_path.read_text()
+            if entry in content:
+                continue
+            page_path.write_text(content.rstrip() + f"\n{entry}\n")
+        elif mechanic in descriptions:
+            page_path.parent.mkdir(parents=True, exist_ok=True)
+            page_path.write_text(
+                f"# {mechanic}\n\n{descriptions[mechanic]}\n\n"
+                f"## Juegos en tu catálogo que la usan:\n{entry}\n"
+            )
+        # else: no page yet and no description available (generation failed) — skip this run
