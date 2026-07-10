@@ -16,3 +16,7 @@ def slice_pages(pdf_bytes: bytes, page_ranges: list[tuple[int, int]]) -> bytes:
     output = io.BytesIO()
     writer.write(output)
     return output.getvalue()
+
+
+def count_pages(pdf_bytes: bytes) -> int:
+    return len(PdfReader(io.BytesIO(pdf_bytes)).pages)

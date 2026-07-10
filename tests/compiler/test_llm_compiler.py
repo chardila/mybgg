@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from compiler.llm_compiler import compile_game
 import json
 
@@ -155,7 +155,7 @@ def test_plan_rules_outline_parses_valid_json():
         {"titulo": "Turn Structure", "paginas": [1, 3]},
         {"titulo": "Combat", "paginas": [4, 6]},
     ])
-    result = plan_rules_outline("some rulebook text", provider)
+    result = plan_rules_outline("some rulebook text", 100, provider)
     assert result == [
         {"titulo": "Turn Structure", "paginas": [1, 3]},
         {"titulo": "Combat", "paginas": [4, 6]},
@@ -168,7 +168,7 @@ def test_plan_rules_outline_strips_markdown_fences():
     provider.generate.return_value = (
         '```json\n[{"titulo": "Combat", "paginas": [1, 2]}]\n```'
     )
-    result = plan_rules_outline("text", provider)
+    result = plan_rules_outline("text", 100, provider)
     assert result == [{"titulo": "Combat", "paginas": [1, 2]}]
 
 
@@ -176,21 +176,21 @@ def test_plan_rules_outline_returns_none_on_malformed_json():
     from compiler.llm_compiler import plan_rules_outline
     provider = MagicMock()
     provider.generate.return_value = "not json at all"
-    assert plan_rules_outline("text", provider) is None
+    assert plan_rules_outline("text", 100, provider) is None
 
 
 def test_plan_rules_outline_returns_none_on_empty_array():
     from compiler.llm_compiler import plan_rules_outline
     provider = MagicMock()
     provider.generate.return_value = "[]"
-    assert plan_rules_outline("text", provider) is None
+    assert plan_rules_outline("text", 100, provider) is None
 
 
 def test_plan_rules_outline_returns_none_when_provider_raises():
     from compiler.llm_compiler import plan_rules_outline
     provider = MagicMock()
     provider.generate.side_effect = Exception("network error")
-    assert plan_rules_outline("text", provider) is None
+    assert plan_rules_outline("text", 100, provider) is None
 
 
 def test_plan_rules_outline_filters_invalid_chapters_but_keeps_valid_ones():
@@ -200,7 +200,7 @@ def test_plan_rules_outline_filters_invalid_chapters_but_keeps_valid_ones():
         {"titulo": "Bad", "paginas": "not-a-list"},
         {"titulo": "Good", "paginas": [1, 2]},
     ])
-    result = plan_rules_outline("text", provider)
+    result = plan_rules_outline("text", 100, provider)
     assert result == [{"titulo": "Good", "paginas": [1, 2]}]
 
 
@@ -209,8 +209,43 @@ def test_plan_rules_outline_merges_down_to_cap():
     provider = MagicMock()
     chapters = [{"titulo": f"Ch{i}", "paginas": [i, i]} for i in range(1, 11)]
     provider.generate.return_value = json.dumps(chapters)
-    result = plan_rules_outline("text", provider)
+    result = plan_rules_outline("text", 100, provider)
     assert len(result) == 8
+
+
+def test_plan_rules_outline_includes_page_count_in_prompt():
+    from compiler.llm_compiler import plan_rules_outline
+    provider = MagicMock()
+    provider.generate.return_value = json.dumps([{"titulo": "Ch", "paginas": [1, 2]}])
+    plan_rules_outline("text", 2, provider)
+    prompt = provider.generate.call_args.kwargs["prompt"]
+    assert "2 pages" in prompt
+
+
+def test_plan_rules_outline_rejects_chapters_entirely_beyond_page_count():
+    from compiler.llm_compiler import plan_rules_outline
+    provider = MagicMock()
+    provider.generate.return_value = json.dumps([
+        {"titulo": "Valid", "paginas": [1, 2]},
+        {"titulo": "Out of range", "paginas": [4, 6]},
+    ])
+    result = plan_rules_outline("text", 2, provider)
+    assert result == [{"titulo": "Valid", "paginas": [1, 2]}]
+
+
+def test_plan_rules_outline_clamps_end_within_page_count():
+    from compiler.llm_compiler import plan_rules_outline
+    provider = MagicMock()
+    provider.generate.return_value = json.dumps([{"titulo": "Ch", "paginas": [1, 10]}])
+    result = plan_rules_outline("text", 2, provider)
+    assert result == [{"titulo": "Ch", "paginas": [1, 2]}]
+
+
+def test_plan_rules_outline_returns_none_when_all_chapters_beyond_page_count():
+    from compiler.llm_compiler import plan_rules_outline
+    provider = MagicMock()
+    provider.generate.return_value = json.dumps([{"titulo": "Out", "paginas": [5, 6]}])
+    assert plan_rules_outline("text", 2, provider) is None
 
 
 def test_merge_chapters_to_cap_preserves_page_coverage():
@@ -352,6 +387,38 @@ def test_compile_game_rules_survives_out_of_range_page_numbers():
     )
 
     assert "rules" in sections
+
+
+def _make_empty_pdf_bytes() -> bytes:
+    import io
+    from pypdf import PdfWriter
+    writer = PdfWriter()
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def test_compile_game_skips_chapter_that_slices_to_zero_pages_without_calling_gemini():
+    pdf_bytes = _make_pdf_bytes(2)
+    deepseek_provider = MagicMock()
+    deepseek_provider.generate.return_value = "# Text section"
+    gemini_provider = MagicMock()
+    gemini_provider.generate.return_value = json.dumps([
+        {"titulo": "Ghost Chapter", "paginas": [1, 2]},
+    ])
+    gemini_provider.generate_multimodal.return_value = "# Setup content"
+
+    with patch("compiler.llm_compiler.slice_pages", return_value=_make_empty_pdf_bytes()):
+        sections, failures = compile_game(
+            GAME_DATA, rulebook_text="Full rulebook text", pdf_bytes=pdf_bytes,
+            deepseek_provider=deepseek_provider, gemini_provider=gemini_provider,
+        )
+
+    # Only the setup call should have hit generate_multimodal — the chapter was skipped
+    # before ever calling Gemini for it.
+    assert gemini_provider.generate_multimodal.call_count == 1
+    assert any("Ghost Chapter" in f for f in failures)
+    assert sections["rules"] == "# Text section"  # fell back to deepseek since 0 chapters succeeded
 
 
 def test_generate_mechanic_description_returns_text():

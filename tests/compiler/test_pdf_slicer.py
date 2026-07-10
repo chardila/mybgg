@@ -1,6 +1,6 @@
 import io
 from pypdf import PdfWriter, PdfReader
-from compiler.pdf_slicer import slice_pages
+from compiler.pdf_slicer import slice_pages, count_pages
 
 
 def _make_pdf_bytes(num_pages: int) -> bytes:
@@ -45,3 +45,15 @@ def test_slice_pages_skips_range_entirely_beyond_page_count():
     result = slice_pages(pdf_bytes, [(10, 20)])
     reader = PdfReader(io.BytesIO(result))
     assert len(reader.pages) == 0
+
+
+def test_count_pages_returns_page_count():
+    pdf_bytes = _make_pdf_bytes(4)
+    assert count_pages(pdf_bytes) == 4
+
+
+def test_count_pages_returns_zero_for_empty_pdf():
+    empty = PdfWriter()
+    buf = io.BytesIO()
+    empty.write(buf)
+    assert count_pages(buf.getvalue()) == 0

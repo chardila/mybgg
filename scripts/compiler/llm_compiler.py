@@ -1,6 +1,6 @@
 import json
 from compiler.llm_provider import LLMProvider
-from compiler.pdf_slicer import slice_pages
+from compiler.pdf_slicer import slice_pages, count_pages
 
 SYSTEM = (
     "You are a board game knowledge compiler. "
@@ -138,11 +138,14 @@ def _strip_json_fences(raw: str) -> str:
     return text.strip()
 
 
-def plan_rules_outline(rulebook_text: str, provider: LLMProvider) -> list[dict] | None:
+def plan_rules_outline(rulebook_text: str, num_pages: int, provider: LLMProvider) -> list[dict] | None:
     prompt = (
-        "Given this rulebook text, identify the page ranges that contain CORE RULES "
+        f"Given this rulebook text, extracted from a PDF with exactly {num_pages} pages, "
+        "identify the page ranges that contain CORE RULES "
         "content (turn structure, actions, combat, scoring, edge cases) — exclude "
         "setup/component lists, FAQ, and glossary-style content.\n"
+        f"Page numbers in your answer MUST be within 1 and {num_pages} (inclusive) — "
+        "this document has no pages outside that range.\n"
         f"Divide into at most {MAX_RULES_CHAPTERS} logical chapters. Return strict JSON, "
         "no markdown fences, no commentary:\n"
         '[{"titulo": "...", "paginas": [start, end]}, ...]\n'
@@ -169,8 +172,9 @@ def plan_rules_outline(rulebook_text: str, provider: LLMProvider) -> list[dict] 
             start, end = int(pages[0]), int(pages[1])
         except (TypeError, ValueError):
             continue
-        if start < 1 or end < start:
+        if start < 1 or end < start or start > num_pages:
             continue
+        end = min(end, num_pages)
         valid.append({"titulo": chapter.get("titulo") or "Rules", "paginas": [start, end]})
 
     if not valid:
@@ -206,12 +210,19 @@ def _compile_rules(
     failures: list[str],
 ) -> None:
     if rulebook_text and pdf_bytes:
-        outline = plan_rules_outline(rulebook_text, gemini_provider)
+        try:
+            num_pages = count_pages(pdf_bytes)
+            outline = plan_rules_outline(rulebook_text, num_pages, gemini_provider)
+        except Exception as e:
+            print(f"Warning: failed to determine PDF page count for outline pass: {e}")
+            outline = None
         if outline:
             chapter_texts = []
             for chapter in outline:
                 try:
                     pdf_slice = slice_pages(pdf_bytes, [tuple(chapter["paginas"])])
+                    if count_pages(pdf_slice) == 0:
+                        raise ValueError("page range produced no pages")
                     chapter_prompt = _rules_chapter_prompt(game_data, chapter)
                     chapter_texts.append(
                         gemini_provider.generate_multimodal(SYSTEM, chapter_prompt, pdf_slice)
