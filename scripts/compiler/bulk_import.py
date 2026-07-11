@@ -49,3 +49,44 @@ def write_summary(results: list[tuple[str, str, str, str]]) -> None:
     if summary_path:
         with open(summary_path, "a") as f:
             f.write(summary + "\n")
+
+
+def main(
+    csv_path: str,
+    wiki_path: str,
+    status: str,
+    limit: int | None = None,
+    only_ids: set[str] | None = None,
+) -> None:
+    rows = load_and_ordered_rows(csv_path)
+    if only_ids:
+        rows = [r for r in rows if r["id"] in only_ids]
+    if limit:
+        rows = rows[:limit]
+
+    results = []
+    for row in rows:
+        if already_in_wiki(wiki_path, row["id"]):
+            results.append((row["id"], row["name"], "skipped", "already in wiki"))
+            continue
+        outcome, detail = import_one(row, wiki_path, status)
+        results.append((row["id"], row["name"], outcome, detail))
+
+    write_summary(results)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Bulk-import games from a CSV into the wiki")
+    parser.add_argument("--csv", type=str, required=True)
+    parser.add_argument("--wiki_path", type=str, required=True)
+    parser.add_argument("--status", type=str, required=True,
+                         choices=["owned", "wishlist", "borrowed", "friend", "played", "archived"])
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--only", type=str, default=None,
+                         help="Comma-separated bgg_id list to restrict the run to (for validation runs)")
+    args = parser.parse_args()
+
+    only_ids = set(args.only.split(",")) if args.only else None
+    main(args.csv, args.wiki_path, args.status, limit=args.limit, only_ids=only_ids)

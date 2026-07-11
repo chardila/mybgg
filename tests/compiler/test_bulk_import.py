@@ -138,3 +138,88 @@ def test_write_summary_appends_to_github_step_summary(tmp_path, monkeypatch, cap
     assert "# existing content" in content
     assert "Game A" in content
     assert "1 imported, 0 skipped, 0 failed" in content
+
+
+# ── main orchestration ───────────────────────────────────────────────────────
+
+def _fixture_csv(tmp_path, rows):
+    csv_path = tmp_path / "games.csv"
+    _write_csv(csv_path, rows)
+    return str(csv_path)
+
+
+def test_main_skips_rows_already_in_wiki(tmp_path):
+    from compiler.bulk_import import main
+    csv_path = _fixture_csv(tmp_path, [
+        {"id": "1", "name": "Already There", "type": "juego", "URL": "https://x/a.pdf", "status": "official", "Confirmed": "yes"},
+    ])
+    wiki_path = tmp_path / "wiki"
+    game_dir = wiki_path / "games" / "already-there-2020"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text('---\nbgg_id: 1\nname: "Already There"\n---\n')
+
+    with patch("compiler.bulk_import.import_one") as mock_import_one, \
+         patch("compiler.bulk_import.write_summary") as mock_summary:
+        main(csv_path, str(wiki_path), "owned")
+
+    mock_import_one.assert_not_called()
+    results = mock_summary.call_args[0][0]
+    assert results == [("1", "Already There", "skipped", "already in wiki")]
+
+
+def test_main_continues_after_a_failed_row(tmp_path):
+    from compiler.bulk_import import main
+    csv_path = _fixture_csv(tmp_path, [
+        {"id": "1", "name": "Fails", "type": "juego", "URL": "https://x/a.pdf", "status": "official", "Confirmed": "yes"},
+        {"id": "2", "name": "Succeeds", "type": "juego", "URL": "https://x/b.pdf", "status": "official", "Confirmed": "yes"},
+    ])
+    wiki_path = tmp_path / "wiki"
+    wiki_path.mkdir()
+
+    with patch("compiler.bulk_import.import_one") as mock_import_one, \
+         patch("compiler.bulk_import.write_summary") as mock_summary:
+        mock_import_one.side_effect = [("failed", "boom"), ("ok", "")]
+        main(csv_path, str(wiki_path), "owned")
+
+    assert mock_import_one.call_count == 2
+    results = mock_summary.call_args[0][0]
+    assert results == [
+        ("1", "Fails", "failed", "boom"),
+        ("2", "Succeeds", "ok", ""),
+    ]
+
+
+def test_main_limit_filters_to_first_n_rows(tmp_path):
+    from compiler.bulk_import import main
+    csv_path = _fixture_csv(tmp_path, [
+        {"id": "1", "name": "A", "type": "juego", "URL": "https://x/a.pdf", "status": "official", "Confirmed": "yes"},
+        {"id": "2", "name": "B", "type": "juego", "URL": "https://x/b.pdf", "status": "official", "Confirmed": "yes"},
+        {"id": "3", "name": "C", "type": "juego", "URL": "https://x/c.pdf", "status": "official", "Confirmed": "yes"},
+    ])
+    wiki_path = tmp_path / "wiki"
+    wiki_path.mkdir()
+
+    with patch("compiler.bulk_import.import_one", return_value=("ok", "")) as mock_import_one, \
+         patch("compiler.bulk_import.write_summary"):
+        main(csv_path, str(wiki_path), "owned", limit=2)
+
+    assert mock_import_one.call_count == 2
+
+
+def test_main_only_filters_by_id(tmp_path):
+    from compiler.bulk_import import main
+    csv_path = _fixture_csv(tmp_path, [
+        {"id": "1", "name": "A", "type": "juego", "URL": "https://x/a.pdf", "status": "official", "Confirmed": "yes"},
+        {"id": "2", "name": "B", "type": "juego", "URL": "https://x/b.pdf", "status": "official", "Confirmed": "yes"},
+        {"id": "3", "name": "C", "type": "juego", "URL": "https://x/c.pdf", "status": "official", "Confirmed": "yes"},
+    ])
+    wiki_path = tmp_path / "wiki"
+    wiki_path.mkdir()
+
+    with patch("compiler.bulk_import.import_one", return_value=("ok", "")) as mock_import_one, \
+         patch("compiler.bulk_import.write_summary") as mock_summary:
+        main(csv_path, str(wiki_path), "owned", only_ids={"1", "3"})
+
+    assert mock_import_one.call_count == 2
+    results = mock_summary.call_args[0][0]
+    assert [r[0] for r in results] == ["1", "3"]
