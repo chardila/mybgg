@@ -15,6 +15,7 @@ describe('minimizeGame', () => {
       status: 'owned',
       rank: '23',
       base_game_slug: '',
+      numplays: 3,
       expansions: [],
     };
 
@@ -26,6 +27,7 @@ describe('minimizeGame', () => {
       categories: ['Animals'],
       status: 'owned',
       rank: '23',
+      numplays: 3,
     });
   });
 
@@ -48,6 +50,25 @@ describe('minimizeGame', () => {
     expect(minimizeGame(game)).not.toHaveProperty('expansions');
   });
 
+  it('defaults numplays to 0 when missing from the source game', () => {
+    const game = {
+      slug: 'foo-2020',
+      name: 'Foo',
+      players: '2-4',
+      weight: '1.0',
+      playing_time: '',
+      mechanics: [],
+      categories: [],
+      edition: '2020',
+      status: 'owned',
+      rank: '9999',
+      base_game_slug: '',
+      expansions: [],
+    };
+
+    expect(minimizeGame(game).numplays).toBe(0);
+  });
+
   it('minimizes nested expansions without recursing into their own rank or expansions', () => {
     const game = {
       slug: 'wingspan-2019',
@@ -61,6 +82,7 @@ describe('minimizeGame', () => {
       status: 'owned',
       rank: '23',
       base_game_slug: '',
+      numplays: 5,
       expansions: [
         {
           slug: 'wingspan-european-expansion-2019',
@@ -74,6 +96,7 @@ describe('minimizeGame', () => {
           status: 'owned',
           rank: 'Not Ranked',
           base_game_slug: 'wingspan-2019',
+          numplays: 0,
           expansions: [],
         },
       ],
@@ -87,6 +110,7 @@ describe('minimizeGame', () => {
       categories: ['Animals'],
       status: 'owned',
       rank: '23',
+      numplays: 5,
       expansions: [
         {
           name: 'Wingspan: European Expansion',
@@ -95,6 +119,7 @@ describe('minimizeGame', () => {
           mechanics: ['Engine Building'],
           categories: ['Animals'],
           status: 'owned',
+          numplays: 0,
         },
       ],
     });

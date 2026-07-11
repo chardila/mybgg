@@ -66,6 +66,7 @@ function minimizeGame(game, isNested = false) {
     mechanics: game.mechanics,
     categories: game.categories,
     status: game.status,
+    numplays: game.numplays ?? 0,
   };
   if (!isNested) {
     out.rank = game.rank;
