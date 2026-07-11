@@ -37,3 +37,23 @@ def test_load_and_ordered_rows_skips_blank_id_rows(tmp_path):
     rows = load_and_ordered_rows(str(csv_path))
 
     assert [r["id"] for r in rows] == ["1"]
+
+
+# ── already_in_wiki ──────────────────────────────────────────────────────────
+
+def test_already_in_wiki_true_when_bgg_id_present(tmp_path):
+    from compiler.bulk_import import already_in_wiki
+    game_dir = tmp_path / "games" / "pandemic-2008"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text(
+        '---\nbgg_id: 30549\nname: "Pandemic"\nslug: pandemic-2008\n---\n'
+    )
+
+    assert already_in_wiki(str(tmp_path), "30549") is True
+
+
+def test_already_in_wiki_false_when_bgg_id_absent(tmp_path):
+    from compiler.bulk_import import already_in_wiki
+    (tmp_path / "games").mkdir()
+
+    assert already_in_wiki(str(tmp_path), "30549") is False
