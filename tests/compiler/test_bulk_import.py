@@ -57,3 +57,52 @@ def test_already_in_wiki_false_when_bgg_id_absent(tmp_path):
     (tmp_path / "games").mkdir()
 
     assert already_in_wiki(str(tmp_path), "30549") is False
+
+
+# ── import_one ────────────────────────────────────────────────────────────────
+
+import sys
+from unittest.mock import MagicMock, patch
+
+
+def test_import_one_returns_ok_on_success():
+    from compiler.bulk_import import import_one
+    row = {"id": "237182", "name": "Root", "type": "juego", "URL": "https://x/root.pdf"}
+
+    with patch("compiler.bulk_import.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        outcome, detail = import_one(row, "wiki", "owned")
+
+    assert (outcome, detail) == ("ok", "")
+    args = mock_run.call_args[0][0]
+    assert args == [
+        sys.executable, "scripts/compiler/add_game.py",
+        "--bgg_id", "237182", "--status", "owned", "--wiki_path", "wiki",
+        "--pdf_url", "https://x/root.pdf",
+    ]
+
+
+def test_import_one_omits_pdf_url_when_blank():
+    from compiler.bulk_import import import_one
+    row = {"id": "1", "name": "No PDF Game", "type": "juego", "URL": ""}
+
+    with patch("compiler.bulk_import.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        import_one(row, "wiki", "owned")
+
+    args = mock_run.call_args[0][0]
+    assert "--pdf_url" not in args
+
+
+def test_import_one_returns_failed_with_truncated_stderr():
+    from compiler.bulk_import import import_one
+    row = {"id": "1", "name": "Broken Game", "type": "juego", "URL": "https://x/b.pdf"}
+    long_stderr = "x" * 1000
+
+    with patch("compiler.bulk_import.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1, stderr=long_stderr)
+        outcome, detail = import_one(row, "wiki", "owned")
+
+    assert outcome == "failed"
+    assert detail == long_stderr[-500:]
+    assert len(detail) == 500
