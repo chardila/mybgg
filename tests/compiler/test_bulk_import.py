@@ -106,3 +106,35 @@ def test_import_one_returns_failed_with_truncated_stderr():
     assert outcome == "failed"
     assert detail == long_stderr[-500:]
     assert len(detail) == 500
+
+
+# ── write_summary ────────────────────────────────────────────────────────────
+
+def test_write_summary_prints_counts(capsys):
+    from compiler.bulk_import import write_summary
+    results = [
+        ("1", "Game A", "ok", ""),
+        ("2", "Game B", "skipped", "already in wiki"),
+        ("3", "Game C", "failed", "PDF extracted no text"),
+    ]
+
+    write_summary(results)
+
+    out = capsys.readouterr().out
+    assert "1 imported, 1 skipped, 1 failed" in out
+    assert "Game C" in out
+    assert "PDF extracted no text" in out
+
+
+def test_write_summary_appends_to_github_step_summary(tmp_path, monkeypatch, capsys):
+    from compiler.bulk_import import write_summary
+    summary_file = tmp_path / "summary.md"
+    summary_file.write_text("# existing content\n")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+
+    write_summary([("1", "Game A", "ok", "")])
+
+    content = summary_file.read_text()
+    assert "# existing content" in content
+    assert "Game A" in content
+    assert "1 imported, 0 skipped, 0 failed" in content
