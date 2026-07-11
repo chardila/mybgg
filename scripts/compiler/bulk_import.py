@@ -2,6 +2,9 @@ import csv
 import os
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from compiler.add_game import find_base_game_in_wiki
 
