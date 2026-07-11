@@ -88,5 +88,5 @@ if __name__ == "__main__":
                          help="Comma-separated bgg_id list to restrict the run to (for validation runs)")
     args = parser.parse_args()
 
-    only_ids = set(args.only.split(",")) if args.only else None
+    only_ids = {x.strip() for x in args.only.split(",")} if args.only else None
     main(args.csv, args.wiki_path, args.status, limit=args.limit, only_ids=only_ids)

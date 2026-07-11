@@ -223,3 +223,24 @@ def test_main_only_filters_by_id(tmp_path):
     assert mock_import_one.call_count == 2
     results = mock_summary.call_args[0][0]
     assert [r[0] for r in results] == ["1", "3"]
+
+
+def test_main_only_strips_whitespace_from_comma_separated_ids(tmp_path):
+    from compiler.bulk_import import main
+    csv_path = _fixture_csv(tmp_path, [
+        {"id": "1", "name": "A", "type": "juego", "URL": "https://x/a.pdf", "status": "official", "Confirmed": "yes"},
+        {"id": "2", "name": "B", "type": "juego", "URL": "https://x/b.pdf", "status": "official", "Confirmed": "yes"},
+        {"id": "3", "name": "C", "type": "juego", "URL": "https://x/c.pdf", "status": "official", "Confirmed": "yes"},
+    ])
+    wiki_path = tmp_path / "wiki"
+    wiki_path.mkdir()
+
+    # Simulate CLI parsing: --only "1, 2" → after fix becomes {"1", "2"}, not {"1", " 2"}
+    with patch("compiler.bulk_import.import_one", return_value=("ok", "")) as mock_import_one, \
+         patch("compiler.bulk_import.write_summary") as mock_summary:
+        only_ids = {x.strip() for x in "1, 2".split(",")}
+        main(csv_path, str(wiki_path), "owned", only_ids=only_ids)
+
+    assert mock_import_one.call_count == 2
+    results = mock_summary.call_args[0][0]
+    assert [r[0] for r in results] == ["1", "2"]
