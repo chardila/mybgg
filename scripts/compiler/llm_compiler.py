@@ -84,7 +84,7 @@ def _prompts(game_data: dict, rulebook_text: str | None) -> dict[str, str]:
             "to a beginner learning the game for the first time (a child or an adult with no "
             "board-gaming experience) — as if you were sitting next to them explaining it. "
             "Use simple, warm, second-person language ('vos vas a...', 'ahora te toca...'). "
-            "Never use board-gaming jerga (worker placement, engine building, etc.) without "
+            "Never use board-gaming jargon (worker placement, engine building, etc.) without "
             "explaining it in plain words the first time it appears. Keep sentences short.\n"
             f"{rb}\n"
             "Include these sections, in this order:\n"

@@ -155,7 +155,7 @@ def test_teaching_prompt_targets_spanish_speaking_beginner():
 
     assert "entirely in Spanish" in teaching_prompt
     assert "beginner" in teaching_prompt.lower()
-    assert "jerga" in teaching_prompt
+    assert "jargon" in teaching_prompt
     assert "Orden de enseñanza" in teaching_prompt
     assert "Suggested teaching order" not in teaching_prompt
 
