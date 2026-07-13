@@ -545,6 +545,140 @@ on *this* repo), `WIKI_GITHUB_TOKEN` (checkout+push permissions on `mybgg-wiki`)
 `DEEPSEEK_API_KEY`, `GEMINI_API_KEY` (compiler LLM calls — same two providers as the
 chat Worker, but called directly from Python here, not proxied through the Worker).
 
+### 5.1 Invoking the import flows by hand
+
+The two `workflow_dispatch` workflows below are the reusable, scriptable entry points
+for getting a game into the wiki — both can be triggered from the GitHub web UI or from
+the `gh` CLI (and therefore from any future automation script that shells out to `gh`).
+`index.yml` also has a manual trigger but isn't game-import-related (§5); `pages.yml`
+and `keepalive.yml` take no inputs, so they aren't covered here.
+
+All `gh` examples below pin `-R chardila/mybgg` explicitly — this repo's `origin` can
+otherwise get resolved against the upstream template repo instead of the fork, which
+would silently target the wrong repo's Actions/secrets.
+
+#### `import-game.yml` — import one game
+
+**Via the GitHub UI**: Actions tab → "Import game to wiki" → Run workflow → fill in
+the fields below → Run workflow.
+
+**Via `gh`**:
+```bash
+gh workflow run import-game.yml -R chardila/mybgg \
+  -f bgg_id=224517 \
+  -f pdf_url=https://example.com/rulebook.pdf \
+  -f edition="2nd Edition" \
+  -f status=owned
+```
+
+| Parameter | Required? | Meaning |
+|---|---|---|
+| `bgg_id` | **yes** | The numeric BGG game id — the number in the game's BGG URL, e.g. `boardgamegeek.com/boardgame/224517/...` → `224517`. |
+| `pdf_url` | no | Direct URL to a rulebook PDF for the exact physical edition owned. When given, that PDF becomes the authoritative source for every section (§3.2); omitted, generation falls back to the model's general knowledge and every section gets a "not from a verified rulebook" warning banner. |
+| `edition` | conditionally | An edition label (e.g. `"2nd Edition"`, `"Fan Edition"`). **Required if `pdf_url` is omitted** (there's no PDF to infer an edition from); if omitted while `pdf_url` is given, it defaults to the BGG publication year. Used only as a slug suffix and a label in prompts/warnings — it does not change which BGG data is fetched. |
+| `status` | **yes** | Ownership status, one of `owned`, `wishlist`, `borrowed`, `friend`, `played`, `archived`. Stored in `index.md` frontmatter; doesn't affect content generation. |
+
+**What you get**: the workflow checks out both repos, runs
+`scripts/compiler/add_game.py` (§3.1), and streams its progress into the run's log —
+`Fetching BGG data for game {id}...` → `Found: {name} ({slug})` → (if an expansion)
+`Expansion of: {base name} ({base slug})` → `Compiling wiki sections...` →
+`Writing wiki files to wiki/games/{slug}/...` → `Done! Wiki for '{name}' committed to
+wiki.`. On success, `mybgg-wiki` gets one new commit (`feat: add wiki for {name}`,
+authored as "GitHub Actions") containing `games/{slug}/*.md` and any new/updated
+`mechanics/*.md` pages, already pushed — nothing further to do on the `mybgg-wiki` side
+by hand. If some sections failed to generate (e.g. a transient API error), the run
+still commits whatever succeeded and exits non-zero with `Warning: N section(s)
+failed: [...]` — re-run `refresh_sections.py` (§5.2 below) for just those sections
+rather than re-running the whole import. If the game is an expansion whose base game
+hasn't been imported yet, the run fails fast with `Error: base game (bgg_id=...) not
+found in wiki. Import the base game first.` — import the base game first, then re-run
+for the expansion.
+
+**Checking the result**:
+```bash
+gh run list -R chardila/mybgg --workflow=import-game.yml --limit 5
+gh run watch <run-id> -R chardila/mybgg   # tail a run in progress
+gh run view <run-id> -R chardila/mybgg --log
+```
+Remember: the game only becomes answerable in the chat until whatever KV-sync process
+lives in `mybgg-wiki` (§1) has picked up the new commit — the import itself never
+touches Cloudflare KV.
+
+#### `bulk-import-games.yml` — import every not-yet-imported row from a CSV
+
+**Via the GitHub UI**: Actions tab → "Bulk import games to wiki" → Run workflow.
+
+**Via `gh`**:
+```bash
+gh workflow run bulk-import-games.yml -R chardila/mybgg \
+  -f csv_path=coleccion_cardila_bgg_rules_full.csv \
+  -f status=owned \
+  -f limit=5 \
+  -f only=224517,174430
+```
+
+| Parameter | Required? | Meaning |
+|---|---|---|
+| `csv_path` | no (default `coleccion_cardila_bgg_rules_full.csv`) | Repo-relative path to a CSV with (at least) `id`, `name`, `type`, `URL` columns (§3.4). |
+| `status` | **yes** | Ownership status applied to *every* row imported in this run — same choices as `import-game.yml`. There's no per-row status in the CSV format today. |
+| `limit` | no | Only process the first N rows after ordering (base games before expansions). Handy for a small validation run before committing to the full CSV. |
+| `only` | no | Comma-separated list of `bgg_id`s to restrict the run to — the way to retry just the rows that failed a previous run (cross-reference against `faltantes.csv`, §3.4), without re-running everything already imported. |
+
+**What you get**: rows already present in the wiki are skipped (no API calls, no
+commit) and marked `skipped` in the summary; every remaining row runs
+`add_game.py` as its own subprocess (§3.4), so one game failing doesn't stop the
+batch. Each successfully-imported row produces its own commit+push to `mybgg-wiki`,
+same as a single `import-game.yml` run — after N successful imports you'll see N new
+commits there, not one batched commit. At the end, a Markdown table (`bgg_id | name |
+outcome | detail`) plus a one-line count (`X imported, Y skipped, Z failed`) is printed
+to the log **and** written to the run's step summary, so the outcome is visible
+without scrolling logs:
+```bash
+gh run view <run-id> -R chardila/mybgg   # shows the step summary directly
+```
+Failed rows keep the last 500 characters of that game's stderr in the `detail` column
+— usually enough to tell whether it was a bad/expired `pdf_url`, a missing base game,
+or an API error. Fix the cause (e.g. update the URL in the CSV), then re-run with
+`-f only=<the failed ids>` rather than the whole CSV again.
+
+### 5.2 Invoking the section-refresh script by hand
+
+`refresh_sections.py` (§3.6) isn't wired into a workflow yet, but it's built the same
+way as the two flows above (env-var secrets in, `--wiki_path` pointing at a `mybgg-wiki`
+checkout, commits+pushes on its own) — so it's already shaped to be dropped into a
+`workflow_dispatch` job later (mirroring `import-game.yml`'s two-repo checkout) if
+on-demand section refreshes from the GitHub UI become worth it. Until then, it's run
+locally or from an ad hoc script:
+
+```bash
+export DEEPSEEK_API_KEY=...
+export GEMINI_API_KEY=...
+export GAMECACHE_BGG_TOKEN=...   # optional — only needed if BGG enforces auth for the plain XML endpoints
+
+python scripts/compiler/refresh_sections.py \
+  --slug root-2018 \
+  --sections teaching,faq \
+  --wiki_path /path/to/local/mybgg-wiki
+```
+
+| Parameter | Required? | Meaning |
+|---|---|---|
+| `--slug` | **yes** | The existing game's folder name under `wiki/games/` (e.g. `root-2018`) — the entry must already exist; this never creates a new game. |
+| `--sections` | **yes** | Comma-separated list drawn from `setup, rules, teaching, faq, glossary` — any subset, in any order. **`index` is always rejected** (frontmatter lives there, not a plain section body — see §3.6). |
+| `--wiki_path` | **yes** | Path to a local clone of `mybgg-wiki` with push access (needs its own git identity configured, or run in an environment where `git push` already works). |
+
+**What you get**: re-fetches current BGG metadata for that game's `bgg_id` (so
+weight/rank/mechanics reflect BGG's latest data even though slug/edition stay fixed),
+re-downloads the stored `pdf_url` if the entry has one (silently falling back to
+general-knowledge generation if that URL has gone stale — see the note in §3.6), then
+regenerates *only* the requested sections and overwrites just those `.md` files. On
+success: one commit (`refresh: regenerate {sections} for {name}`) pushed to
+`mybgg-wiki`, or no commit at all if the regenerated content is byte-identical to what
+was already there. Exits non-zero (count of failed sections) if any section failed to
+generate, in which case whatever did succeed is still committed. Same KV-sync caveat as
+above applies: the refreshed Markdown only reaches chat once `mybgg-wiki`'s sync step
+has run.
+
 ---
 
 ## 6. Rebuilding from scratch
