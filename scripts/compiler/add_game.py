@@ -39,6 +39,7 @@ def main(
     status: str,
     wiki_path: str,
     edition: str | None = None,
+    name: str | None = None,
 ) -> None:
     bgg_token = os.environ.get("GAMECACHE_BGG_TOKEN")
     deepseek_key = os.environ["DEEPSEEK_API_KEY"]
@@ -49,6 +50,14 @@ def main(
 
     print(f"Fetching BGG data for game {bgg_id}...")
     game_data = fetch_game(bgg_id, token=bgg_token)
+
+    if name:
+        # Some BGG entries bundle several distinct maps/variants under one id
+        # (e.g. Ticket to Ride's "Map Collection" expansions) — overriding the
+        # name lets each map become its own wiki entry with its own slug,
+        # instead of colliding on the single BGG-provided title.
+        game_data["name"] = name
+        game_data["slug"] = _to_slug(name)
 
     resolved_edition = _resolve_edition(game_data, edition)
     game_data["slug"] = f"{game_data['slug']}-{resolved_edition}"
@@ -122,6 +131,9 @@ if __name__ == "__main__":
     parser.add_argument("--pdf_url", type=str, default=None)
     parser.add_argument("--edition", type=str, default=None,
                         help="Edition label (required when --pdf_url is not provided)")
+    parser.add_argument("--name", type=str, default=None,
+                        help="Override the BGG name (and derived slug) — for BGG entries that "
+                        "bundle multiple distinct maps/variants under one id")
     parser.add_argument("--status", type=str, required=True,
                         choices=["owned", "wishlist", "borrowed", "friend", "played", "archived"])
     parser.add_argument("--wiki_path", type=str, required=True)
@@ -131,6 +143,7 @@ if __name__ == "__main__":
         bgg_id=args.bgg_id,
         pdf_url=args.pdf_url,
         edition=args.edition,
+        name=args.name,
         status=args.status,
         wiki_path=args.wiki_path,
     )

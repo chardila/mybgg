@@ -139,6 +139,32 @@ def test_main_slug_includes_edition_from_year(tmp_path):
     assert captured["edition"] == "2018"
 
 
+def test_main_name_override_replaces_name_and_slug(tmp_path):
+    captured = {}
+    def capture_write(game_data, *args, **kwargs):
+        captured.update(game_data)
+
+    bundle_game_data = {**GAME_DATA, "name": "Ticket to Ride Map Collection 2: India & Switzerland"}
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=bundle_game_data.copy()),
+        patch("compiler.add_game.fetch_pdf", return_value=b"%PDF"),
+        patch("compiler.add_game.extract_text", return_value="Rules"),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
+        patch("compiler.add_game.compile_game", return_value=(FULL_SECTIONS, [])),
+        patch("compiler.add_game.write_game", side_effect=capture_write),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=106645, pdf_url="https://example.com/india.pdf",
+             name="Ticket to Ride: India Map", status="owned", wiki_path=str(tmp_path))
+
+    assert captured["name"] == "Ticket to Ride: India Map"
+    assert captured["slug"] == "ticket-to-ride-india-map-2018"
+
+
 def test_main_exits_when_pdf_extracts_no_text(tmp_path):
     with (
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),

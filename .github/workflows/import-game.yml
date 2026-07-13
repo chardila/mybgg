@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: ''
+      name:
+        description: 'Override the BGG name/slug — for BGG entries that bundle multiple maps/variants under one id (e.g. Ticket to Ride Map Collections)'
+        required: false
+        type: string
+        default: ''
       status:
         description: 'Ownership status'
         required: true
@@ -66,6 +71,7 @@ jobs:
           BGG_ID: ${{ inputs.bgg_id }}
           PDF_URL: ${{ inputs.pdf_url }}
           EDITION: ${{ inputs.edition }}
+          NAME: ${{ inputs.name }}
           STATUS: ${{ inputs.status }}
         run: |
           ARGS=(--bgg_id "$BGG_ID" --status "$STATUS" --wiki_path wiki)
@@ -74,5 +80,8 @@ jobs:
           fi
           if [ -n "$EDITION" ]; then
             ARGS+=(--edition "$EDITION")
+          fi
+          if [ -n "$NAME" ]; then
+            ARGS+=(--name "$NAME")
           fi
           python scripts/compiler/add_game.py "${ARGS[@]}"
