@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: ''
+      base_game_bgg_id:
+        description: 'Override which base game this is an expansion of (BGG numeric id) — for when the wiki dependency differs from BGG''s own link'
+        required: false
+        type: string
+        default: ''
       status:
         description: 'Ownership status'
         required: true
@@ -72,6 +77,7 @@ jobs:
           PDF_URL: ${{ inputs.pdf_url }}
           EDITION: ${{ inputs.edition }}
           NAME: ${{ inputs.name }}
+          BASE_GAME_BGG_ID: ${{ inputs.base_game_bgg_id }}
           STATUS: ${{ inputs.status }}
         run: |
           ARGS=(--bgg_id "$BGG_ID" --status "$STATUS" --wiki_path wiki)
@@ -83,5 +89,8 @@ jobs:
           fi
           if [ -n "$NAME" ]; then
             ARGS+=(--name "$NAME")
+          fi
+          if [ -n "$BASE_GAME_BGG_ID" ]; then
+            ARGS+=(--base_game_bgg_id "$BASE_GAME_BGG_ID")
           fi
           python scripts/compiler/add_game.py "${ARGS[@]}"

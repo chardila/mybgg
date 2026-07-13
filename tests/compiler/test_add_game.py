@@ -165,6 +165,39 @@ def test_main_name_override_replaces_name_and_slug(tmp_path):
     assert captured["slug"] == "ticket-to-ride-india-map-2018"
 
 
+def test_main_base_game_bgg_id_override_wins_over_bgg_link(tmp_path):
+    game_dir = tmp_path / "games" / "monsdrawsity-top-secret-2022"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text(
+        '---\nbgg_id: 365752\nname: "MonsDRAWsity: Top Secret"\nslug: monsdrawsity-top-secret-2022\n---\n'
+    )
+    captured = {}
+    def capture_compile(game_data, *args, **kwargs):
+        captured.update(game_data)
+        return (FULL_SECTIONS, [])
+
+    expansion_data = {
+        **GAME_DATA, "name": "MonsDRAWsity: Cute Creatures",
+        "is_expansion": True, "base_game_id": 283212,  # BGG's own (different) link
+    }
+
+    with (
+        patch("compiler.add_game.fetch_game", return_value=expansion_data.copy()),
+        patch("compiler.add_game.DeepSeekProvider"),
+        patch("compiler.add_game.GeminiProvider"),
+        patch("compiler.add_game.sync_mechanic_pages"),
+        patch("compiler.add_game.compile_game", side_effect=capture_compile),
+        patch("compiler.add_game.write_game"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
+    ):
+        from compiler.add_game import main
+        main(bgg_id=325562, pdf_url=None, edition="2020", status="owned",
+             wiki_path=str(tmp_path), base_game_bgg_id=365752)
+
+    assert captured["base_game_slug"] == "monsdrawsity-top-secret-2022"
+    assert captured["base_game_name"] == "MonsDRAWsity: Top Secret"
+
+
 def test_main_exits_when_pdf_extracts_no_text(tmp_path):
     with (
         patch("compiler.add_game.fetch_game", return_value=GAME_DATA.copy()),

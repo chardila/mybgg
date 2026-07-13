@@ -40,6 +40,7 @@ def main(
     wiki_path: str,
     edition: str | None = None,
     name: str | None = None,
+    base_game_bgg_id: int | None = None,
 ) -> None:
     bgg_token = os.environ.get("GAMECACHE_BGG_TOKEN")
     deepseek_key = os.environ["DEEPSEEK_API_KEY"]
@@ -58,6 +59,14 @@ def main(
         # instead of colliding on the single BGG-provided title.
         game_data["name"] = name
         game_data["slug"] = _to_slug(name)
+
+    if base_game_bgg_id:
+        # Overrides BGG's own "inbound expansion" link — useful when the
+        # wiki's actual dependency differs from BGG's canonical one (e.g. an
+        # expansion that BGG links to game A, but that the user wants filed
+        # under a related game B instead).
+        game_data["is_expansion"] = True
+        game_data["base_game_id"] = base_game_bgg_id
 
     resolved_edition = _resolve_edition(game_data, edition)
     game_data["slug"] = f"{game_data['slug']}-{resolved_edition}"
@@ -134,6 +143,10 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, default=None,
                         help="Override the BGG name (and derived slug) — for BGG entries that "
                         "bundle multiple distinct maps/variants under one id")
+    parser.add_argument("--base_game_bgg_id", type=int, default=None,
+                        help="Override which base game this is an expansion of (BGG numeric id) "
+                        "— for when the wiki's intended dependency differs from BGG's own "
+                        "'inbound expansion' link")
     parser.add_argument("--status", type=str, required=True,
                         choices=["owned", "wishlist", "borrowed", "friend", "played", "archived"])
     parser.add_argument("--wiki_path", type=str, required=True)
@@ -144,6 +157,7 @@ if __name__ == "__main__":
         pdf_url=args.pdf_url,
         edition=args.edition,
         name=args.name,
+        base_game_bgg_id=args.base_game_bgg_id,
         status=args.status,
         wiki_path=args.wiki_path,
     )
