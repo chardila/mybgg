@@ -14,9 +14,24 @@ MAX_RULES_CHAPTERS = 8
 SECTION_ORDER = ["index", "setup", "rules", "teaching", "faq", "glossary"]
 
 
+def _name_lock_note(game_data: dict) -> str:
+    name = game_data["name"]
+    description = (game_data.get("description") or "")[:500]
+    hint = f"\nOfficial BGG description (for correct component naming):\n{description}\n" if description else ""
+    return (
+        f"Always refer to this game as \"{name}\" and use standard English names for its "
+        "components/characters, even if the source material is a regional or translated "
+        f"edition that uses a different title or names (e.g. a foreign-language rulebook). "
+        f"Do not adopt an alternate title or transliterated name found in the source.\n{hint}"
+    )
+
+
 def _rulebook_block(rulebook_text: str | None, game_data: dict) -> str:
     if rulebook_text:
-        return f"\nRulebook text (authoritative source):\n---\n{rulebook_text}\n---\n"
+        return (
+            f"\nRulebook text (authoritative source):\n---\n{rulebook_text}\n---\n"
+            f"{_name_lock_note(game_data)}"
+        )
     edition = game_data.get("edition", "unknown")
     name = game_data["name"]
     return (
@@ -124,6 +139,7 @@ def _rules_chapter_prompt(game_data: dict, chapter: dict) -> str:
     return (
         f"{ex}Write the \"{chapter['titulo']}\" section of the Markdown rules reference "
         f"for \"{name}\".\n\n"
+        f"{_name_lock_note(game_data)}\n"
         "The attached PDF pages are the authoritative source for this section, regardless "
         "of what language they are written in — write your output in English, translating "
         "as needed. Translate diagrams, component illustrations, and example-of-play images "
