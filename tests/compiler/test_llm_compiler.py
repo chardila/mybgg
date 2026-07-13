@@ -148,6 +148,18 @@ def test_base_game_prompts_have_no_expansion_block():
             f"expansion block unexpectedly found in '{section}' prompt"
 
 
+def test_teaching_prompt_targets_spanish_speaking_beginner():
+    from compiler.llm_compiler import _prompts
+    prompts = _prompts(GAME_DATA, rulebook_text=None)
+    teaching_prompt = prompts["teaching"]
+
+    assert "entirely in Spanish" in teaching_prompt
+    assert "beginner" in teaching_prompt.lower()
+    assert "jerga" in teaching_prompt
+    assert "Orden de enseñanza" in teaching_prompt
+    assert "Suggested teaching order" not in teaching_prompt
+
+
 def test_plan_rules_outline_parses_valid_json():
     from compiler.llm_compiler import plan_rules_outline
     provider = MagicMock()
