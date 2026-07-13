@@ -124,10 +124,11 @@ def _rules_chapter_prompt(game_data: dict, chapter: dict) -> str:
     return (
         f"{ex}Write the \"{chapter['titulo']}\" section of the Markdown rules reference "
         f"for \"{name}\".\n\n"
-        "The attached PDF pages are the authoritative source for this section. Translate "
-        "diagrams, component illustrations, and example-of-play images into structured "
-        "Markdown text (numbered steps, descriptive lists, or a blockquote example) rather "
-        "than describing that an image exists.\n\n"
+        "The attached PDF pages are the authoritative source for this section, regardless "
+        "of what language they are written in — write your output in English, translating "
+        "as needed. Translate diagrams, component illustrations, and example-of-play images "
+        "into structured Markdown text (numbered steps, descriptive lists, or a blockquote "
+        "example) rather than describing that an image exists.\n\n"
         "Include:\n"
         "1. Turn structure and core mechanics covered in these pages\n"
         "2. Special rules and edge cases shown or stated here\n"
@@ -159,11 +160,18 @@ def plan_rules_outline(rulebook_text: str, num_pages: int, provider: LLMProvider
         f"Divide into at most {MAX_RULES_CHAPTERS} logical chapters. Return strict JSON, "
         "no markdown fences, no commentary:\n"
         '[{"titulo": "...", "paginas": [start, end]}, ...]\n'
+        "The rulebook text may be in any language — regardless of its original language, "
+        "\"titulo\" values MUST be in English, since they get used as section headings in "
+        "an English-language wiki page.\n"
         "If you cannot confidently identify chapter boundaries, return an empty array.\n\n"
         f"Rulebook text:\n---\n{rulebook_text}\n---"
     )
     try:
-        raw = provider.generate(system="You are a board game rules analyst.", prompt=prompt)
+        raw = provider.generate(
+            system="You are a board game rules analyst. Always answer in English, "
+            "even if the source material is in another language.",
+            prompt=prompt,
+        )
         chapters = json.loads(_strip_json_fences(raw))
     except Exception:
         return None
