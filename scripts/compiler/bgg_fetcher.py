@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from gamecache.bgg_client import BGGClient
 
 
@@ -36,7 +37,10 @@ def fetch_game(bgg_id: int, token: str | None = None) -> dict:
 
 
 def _to_slug(name: str) -> str:
-    slug = name.lower()
+    # Strip accents/diacritics (é -> e, ñ -> n, ...) so slugs stay pure ASCII —
+    # the chat Worker's slug validation (/^[a-z0-9-]+$/) rejects anything else.
+    ascii_only = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    slug = ascii_only.lower()
     slug = re.sub(r"[^\w\s-]", "", slug)
     slug = re.sub(r"[\s_]+", "-", slug)
     return slug.strip("-")

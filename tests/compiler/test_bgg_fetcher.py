@@ -61,6 +61,14 @@ def test_to_slug_with_special_chars():
     assert _to_slug("Arkham Horror: The Card Game") == "arkham-horror-the-card-game"
 
 
+def test_to_slug_strips_accents():
+    assert _to_slug("Valdés") == "valdes"
+
+
+def test_to_slug_strips_enye():
+    assert _to_slug("Añón") == "anon"
+
+
 def test_fetch_game_includes_yearpublished():
     with patch("compiler.bgg_fetcher.BGGClient") as mock_cls:
         mock_client = MagicMock()
