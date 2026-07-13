@@ -64,11 +64,7 @@ def update_sections(
     section_names = ", ".join(sorted(sections))
     paths = [str(game_dir / f"{s}.md") for s in sections]
     _git(wiki_path, "add", *paths)
-    result = subprocess.run(
-        ["git", "-C", wiki_path, "diff", "--cached", "--quiet"],
-        capture_output=True,
-    )
-    if result.returncode == 0:
+    if not _has_staged_changes(wiki_path):
         print(f"No changes to commit for {game_name} ({section_names})")
         return
     _git(wiki_path, "commit", "-m", f"refresh: regenerate {section_names} for {game_name}")
@@ -158,11 +154,7 @@ def _git_commit_and_push(
         _git(wiki_path, "add", f"games/{base_game_slug}/index.md")
     if (Path(wiki_path) / "mechanics").exists():
         _git(wiki_path, "add", "mechanics/")
-    result = subprocess.run(
-        ["git", "-C", wiki_path, "diff", "--cached", "--quiet"],
-        capture_output=True,
-    )
-    if result.returncode == 0:
+    if not _has_staged_changes(wiki_path):
         print(f"No changes to commit for {name} (content unchanged)")
         return
     _git(wiki_path, "commit", "-m", f"feat: add wiki for {name}")
@@ -171,6 +163,14 @@ def _git_commit_and_push(
 
 def _git(wiki_path: str, *args: str) -> None:
     subprocess.run(["git", "-C", wiki_path, *args], check=True, capture_output=True)
+
+
+def _has_staged_changes(wiki_path: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", wiki_path, "diff", "--cached", "--quiet"],
+        capture_output=True,
+    )
+    return result.returncode != 0
 
 
 def _mechanic_filename(mechanic: str) -> str:
