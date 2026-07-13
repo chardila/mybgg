@@ -196,6 +196,18 @@ def test_main_exits_on_invalid_section_name(tmp_path):
         assert exc.value.code == 1
 
 
+def test_main_rejects_index_section(tmp_path):
+    # index.md holds frontmatter + optional Expansions block, not a plain
+    # section body — update_sections() has no special-casing for it, so
+    # allowing "index" through would silently overwrite/corrupt it.
+    _write_index(tmp_path, "root")
+    with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}):
+        from compiler.refresh_sections import main
+        with pytest.raises(SystemExit) as exc:
+            main(slug="root", sections={"index"}, wiki_path=str(tmp_path))
+        assert exc.value.code == 1
+
+
 def test_main_exits_when_all_requested_sections_fail(tmp_path):
     _write_index(tmp_path, "root")
     with (

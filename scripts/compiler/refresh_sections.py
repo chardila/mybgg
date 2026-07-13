@@ -13,7 +13,15 @@ from compiler.llm_provider import DeepSeekProvider, GeminiProvider
 from compiler.llm_compiler import compile_game, SECTION_ORDER
 from compiler.wiki_writer import update_sections, _llm_only_warning
 
-VALID_SECTIONS = set(SECTION_ORDER)
+
+# "index" is deliberately excluded: unlike the other five sections, index.md
+# holds frontmatter (bgg_id, slug, status, mechanics, ...) plus an optional
+# "## Expansions" block, not a plain section body — write_game() special-cases
+# it for the same reason (it never writes index.md through the plain
+# section-file loop). update_sections() has no such special-casing, so
+# allowing "index" here would let a refresh silently overwrite and push a
+# corrupted index.md.
+VALID_SECTIONS = set(SECTION_ORDER) - {"index"}
 
 
 def _frontmatter_field(content: str, key: str) -> str | None:
