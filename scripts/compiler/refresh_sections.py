@@ -85,17 +85,28 @@ def main(slug: str, sections: set[str], wiki_path: str) -> None:
         game_data["base_game_name"] = _base_game_name(wiki_path, existing["base_game_slug"])
 
     pdf_url = existing["pdf_url"]
+    pdf_bytes = None
+    rulebook_text = None
     if pdf_url:
         print(f"Downloading PDF from {pdf_url}...")
-        pdf_bytes = fetch_pdf(pdf_url)
-        rulebook_text = extract_text(pdf_bytes)
-        if not rulebook_text:
-            print("Error: PDF extracted no text.", file=sys.stderr)
-            sys.exit(1)
-        print(f"Extracted {len(rulebook_text)} characters from PDF.")
-    else:
-        pdf_bytes = None
-        rulebook_text = None
+        try:
+            pdf_bytes = fetch_pdf(pdf_url)
+            rulebook_text = extract_text(pdf_bytes)
+        except Exception as e:
+            # Some stored pdf_urls are ephemeral (e.g. BGG-hosted files are
+            # served from pre-signed S3 links that expire) — a broken URL
+            # shouldn't abort a refresh, it should just fall back to
+            # general-knowledge generation like a game with no pdf_url at all.
+            print(f"Warning: failed to download PDF ({e}); falling back to general knowledge.", file=sys.stderr)
+            pdf_bytes = None
+            rulebook_text = None
+        else:
+            if not rulebook_text:
+                print("Warning: PDF extracted no text; falling back to general knowledge.", file=sys.stderr)
+                pdf_bytes = None
+                rulebook_text = None
+            else:
+                print(f"Extracted {len(rulebook_text)} characters from PDF.")
 
     print(f"Regenerating section(s) {sorted(sections)} for '{game_data['name']}' ({slug})...")
     generated, failures = compile_game(

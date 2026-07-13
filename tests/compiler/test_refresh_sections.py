@@ -128,6 +128,52 @@ def test_main_redownloads_pdf_when_frontmatter_has_pdf_url(tmp_path):
     assert compile_args[2] == b"%PDF"           # pdf_bytes
 
 
+def test_main_falls_back_to_llm_only_when_pdf_download_fails(tmp_path):
+    # Some stored pdf_urls are ephemeral pre-signed links (e.g. BGG-hosted
+    # files) that expire — a broken URL must degrade gracefully, not crash
+    # the whole refresh.
+    _write_index(tmp_path, "root", extra_frontmatter='pdf_url: "https://example.com/root.pdf"\n')
+
+    with (
+        patch("compiler.refresh_sections.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.refresh_sections.fetch_pdf", side_effect=Exception("403 Forbidden")),
+        patch("compiler.refresh_sections.DeepSeekProvider"),
+        patch("compiler.refresh_sections.GeminiProvider"),
+        patch("compiler.refresh_sections.compile_game", return_value=(TEACHING_ONLY, [])) as mock_compile,
+        patch("compiler.refresh_sections.update_sections") as mock_update,
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
+    ):
+        from compiler.refresh_sections import main
+        main(slug="root", sections={"teaching"}, wiki_path=str(tmp_path))
+
+    compile_args = mock_compile.call_args[0]
+    assert compile_args[1] is None  # rulebook_text
+    assert compile_args[2] is None  # pdf_bytes
+    update_kwargs = mock_update.call_args.kwargs
+    assert "[!WARNING]" in update_kwargs["warning"]
+
+
+def test_main_falls_back_to_llm_only_when_pdf_extracts_no_text(tmp_path):
+    _write_index(tmp_path, "root", extra_frontmatter='pdf_url: "https://example.com/root.pdf"\n')
+
+    with (
+        patch("compiler.refresh_sections.fetch_game", return_value=GAME_DATA.copy()),
+        patch("compiler.refresh_sections.fetch_pdf", return_value=b"%PDF"),
+        patch("compiler.refresh_sections.extract_text", return_value=""),
+        patch("compiler.refresh_sections.DeepSeekProvider"),
+        patch("compiler.refresh_sections.GeminiProvider"),
+        patch("compiler.refresh_sections.compile_game", return_value=(TEACHING_ONLY, [])) as mock_compile,
+        patch("compiler.refresh_sections.update_sections"),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "k", "GEMINI_API_KEY": "k"}),
+    ):
+        from compiler.refresh_sections import main
+        main(slug="root", sections={"teaching"}, wiki_path=str(tmp_path))
+
+    compile_args = mock_compile.call_args[0]
+    assert compile_args[1] is None  # rulebook_text
+    assert compile_args[2] is None  # pdf_bytes
+
+
 def test_main_llm_only_when_no_pdf_url_applies_warning(tmp_path):
     _write_index(tmp_path, "root")
 
