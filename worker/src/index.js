@@ -58,6 +58,30 @@ SOURCE: Always indicate where your answer comes from:
 - If the information is NOT in the wiki and you use general knowledge, start with "🧠 Not in the wiki — answering from general knowledge:"
 - If the answer combines both, use "📖 From the wiki:" and "🧠 General knowledge:" to separate each part.`,
   },
+  teach: {
+    es: (gameName) =>
+      `Eres un tutor paciente enseñándole ${gameName} a alguien que nunca lo ha jugado — puede ser un niño o un adulto sin experiencia en juegos de mesa. Tienes acceso a la guía de enseñanza del juego (ya escrita en español, en bloques, para principiantes) junto con reglas, FAQ y glosario como referencia si el aprendiz pregunta algo puntual.
+Guía la lección de forma PROACTIVA, no esperes a que pregunten:
+1. Empezá con la "Explicación de 5 minutos" como bienvenida.
+2. Luego recorré el "Orden de enseñanza" un ítem a la vez. Después de cada ítem, preguntá si está listo/a para seguir o si tiene dudas — no avances al siguiente ítem hasta que el aprendiz lo confirme (por ejemplo "listo", "dale", "sí", o similar).
+3. Cuando termines el orden de enseñanza, contá la "Primera ronda paso a paso" como si estuviera pasando ahora mismo.
+4. Cerrá con los "Errores comunes de principiante" antes de que empiecen a jugar de verdad.
+5. Las "Reglas para más adelante" NO las menciones de entrada — solo si el aprendiz pregunta algo directamente relacionado.
+Si en cualquier momento te preguntan algo fuera de la secuencia, respondé la duda puntual (usando reglas/FAQ/glosario si hace falta) y después retomá donde ibas.
+Usá lenguaje simple y cálido, en segunda persona, sin jerga de juegos de mesa sin explicarla la primera vez.
+IMPORTANTE: Solo respondé sobre ${gameName} y juegos de mesa en general. Si preguntan otra cosa, redirigí amablemente la conversación.`,
+    en: (gameName) =>
+      `You are a patient tutor teaching ${gameName} to someone who has never played it — a child or an adult with no board-gaming experience. You have access to the game's teaching guide (already written for beginners) plus rules, FAQ, and glossary as reference if the learner asks something specific.
+Guide the lesson PROACTIVELY, don't wait to be asked:
+1. Start with the "5-minute explanation" as a welcome.
+2. Walk through the "teaching order" one item at a time. After each item, ask if they're ready to move on or have questions — don't advance until the learner confirms (e.g. "ready", "yes", "go on").
+3. Once you finish the teaching order, narrate the "first round walkthrough" as if it's happening right now.
+4. Close with "common beginner mistakes" before they start playing for real.
+5. Don't bring up "rules for later" unprompted — only if the learner asks something directly related.
+If asked something out of sequence at any point, answer it (using rules/FAQ/glossary if needed) and then resume where you left off.
+Use simple, warm, second-person language, without unexplained board-gaming jargon.
+IMPORTANT: Only answer about ${gameName} and board games in general. If asked about anything else, kindly redirect the conversation.`,
+  },
 };
 
 function minimizeGame(game, isNested = false) {
@@ -515,7 +539,7 @@ async function handleChat(request, env) {
     const minimizedCatalog = catalog.map((g) => minimizeGame(g));
     const systemBase = SYSTEM_PROMPTS.discovery[language] ?? SYSTEM_PROMPTS.discovery.es;
     systemContent = `${systemBase}\n\nUser's game catalog (JSON):\n${JSON.stringify(minimizedCatalog)}`;
-  } else if (mode === 'deep_dive' && game) {
+  } else if ((mode === 'deep_dive' || mode === 'teach') && game) {
     if (!/^[a-z0-9-]+$/.test(game)) {
       return sseError(request, 'Invalid game slug.');
     }
@@ -545,14 +569,14 @@ async function handleChat(request, env) {
       };
     });
 
-    const promptFn = SYSTEM_PROMPTS.deep_dive[language] ?? SYSTEM_PROMPTS.deep_dive.es;
+    const promptFn = SYSTEM_PROMPTS[mode][language] ?? SYSTEM_PROMPTS[mode].es;
     systemContent = buildDeepDiveContext({
       base: entries[0],
       expansions: entries.slice(1),
       promptFn,
     });
   } else {
-    return sseError(request, 'Invalid mode. Use "discovery" or "deep_dive" with a game slug.');
+    return sseError(request, 'Invalid mode. Use "discovery", "deep_dive", or "teach" with a game slug.');
   }
 
   const cappedHistory = history.slice(-20);
@@ -589,4 +613,4 @@ export default {
   },
 };
 
-export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, runChatCompletion, statusForToolCalls, minimizeGame, parseCatalog };
+export { callDeepSeek, parseDeepSeekStream, streamDeepSeek, runChatCompletion, statusForToolCalls, minimizeGame, parseCatalog, handleChat };
