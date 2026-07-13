@@ -15,3 +15,8 @@ worker/.wrangler/
 worker/node_modules/
 
 .worktrees/
+
+# Personal working files, not meant to be tracked in the repo
+analisis_generacion_wiki.md
+faltantes.csv
+.~lock.*#
