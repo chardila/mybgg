@@ -203,6 +203,7 @@
   </select>
   <div id="expansion-checkboxes" style="display:none"></div>
   <button id="btn-start-deepdive" style="display:none">Empezar</button>
+  <button id="btn-start-teach" style="display:none">Enséñame a jugar</button>
   <button id="btn-reset-discovery" style="display:none" onclick="resetToDiscovery()">
     Volver a descubrimiento
   </button>
@@ -478,15 +479,35 @@
     addMessage('assistant', currentLanguage === 'en' ? openingEn : openingEs);
   }
 
+  function startTeach(baseSlug, baseLabel, expansionSlugs, expansionLabels) {
+    currentMode = 'teach';
+    currentGame = baseSlug;
+    currentExpansions = expansionSlugs;
+    currentGameName = [baseLabel, ...expansionLabels].join(' + ');
+    history = [];
+    setAwaitingCombo(false);
+
+    const safeName = currentGameName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    document.getElementById('mode-bar').textContent = `Modo: Aprendiendo ${currentGameName}`;
+    document.getElementById('btn-reset-discovery').style.display = 'inline';
+    document.getElementById('chat-container').innerHTML = '';
+
+    sendMessage(currentLanguage === 'en'
+      ? `Teach me how to play ${safeName} from scratch.`
+      : `Enséñame a jugar ${safeName} desde cero.`);
+  }
+
   document.getElementById('game-select').addEventListener('change', function () {
     const slug = this.value;
     const checkboxContainer = document.getElementById('expansion-checkboxes');
     const startButton = document.getElementById('btn-start-deepdive');
+    const teachButton = document.getElementById('btn-start-teach');
     checkboxContainer.innerHTML = '';
 
     if (!slug) {
       checkboxContainer.style.display = 'none';
       startButton.style.display = 'none';
+      teachButton.style.display = 'none';
       setAwaitingCombo(false);
       return;
     }
@@ -497,8 +518,9 @@
 
     if (expansions.length === 0) {
       checkboxContainer.style.display = 'none';
-      startButton.style.display = 'none';
-      startDeepDive(slug, label, [], []);
+      startButton.style.display = 'inline';
+      teachButton.style.display = 'inline';
+      setAwaitingCombo(true);
       return;
     }
 
@@ -515,6 +537,7 @@
     });
     checkboxContainer.style.display = 'block';
     startButton.style.display = 'inline';
+    teachButton.style.display = 'inline';
     setAwaitingCombo(true);
   });
 
@@ -533,6 +556,21 @@
     startDeepDive(slug, label, expansionSlugs, expansionLabels);
   });
 
+  document.getElementById('btn-start-teach').addEventListener('click', function () {
+    const select = document.getElementById('game-select');
+    const slug = select.value;
+    if (!slug) return;
+    const label = select.options[select.selectedIndex].textContent;
+
+    const checked = Array.from(
+      document.querySelectorAll('#expansion-checkboxes input[type="checkbox"]:checked')
+    );
+    const expansionSlugs = checked.map((c) => c.value);
+    const expansionLabels = checked.map((c) => c.dataset.label);
+
+    startTeach(slug, label, expansionSlugs, expansionLabels);
+  });
+
   function resetToDiscovery() {
     currentMode = 'discovery';
     currentGame = null;
@@ -543,6 +581,7 @@
     document.getElementById('expansion-checkboxes').innerHTML = '';
     document.getElementById('expansion-checkboxes').style.display = 'none';
     document.getElementById('btn-start-deepdive').style.display = 'none';
+    document.getElementById('btn-start-teach').style.display = 'none';
     document.getElementById('mode-bar').textContent = 'Modo: Descubrimiento de juego';
     document.getElementById('btn-reset-discovery').style.display = 'none';
     document.getElementById('chat-container').innerHTML = '';
