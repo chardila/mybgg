@@ -378,3 +378,69 @@ def test_git_commit_and_push_skips_mechanics_dir_when_absent(tmp_path):
 
     added_paths = [c.args[2] for c in mock_git.call_args_list if c.args[1] == "add"]
     assert "mechanics/" not in added_paths
+
+
+def test_update_sections_writes_only_requested_files(tmp_path):
+    from compiler.wiki_writer import update_sections
+    game_dir = tmp_path / "games" / "root"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text("---\nbgg_id: 237182\n---\n\n# Root\n")
+
+    with patch("compiler.wiki_writer._git"):
+        update_sections(str(tmp_path), "root", {"teaching": "New teaching content."}, "Root")
+
+    assert (game_dir / "teaching.md").read_text() == "New teaching content."
+    assert not (game_dir / "faq.md").exists()
+
+
+def test_update_sections_does_not_touch_index(tmp_path):
+    from compiler.wiki_writer import update_sections
+    game_dir = tmp_path / "games" / "root"
+    game_dir.mkdir(parents=True)
+    original_index = "---\nbgg_id: 237182\n---\n\n# Root\n"
+    (game_dir / "index.md").write_text(original_index)
+
+    with patch("compiler.wiki_writer._git"):
+        update_sections(str(tmp_path), "root", {"teaching": "New teaching content."}, "Root")
+
+    assert (game_dir / "index.md").read_text() == original_index
+
+
+def test_update_sections_applies_warning_prefix(tmp_path):
+    from compiler.wiki_writer import update_sections, _llm_only_warning
+    game_dir = tmp_path / "games" / "root"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text("---\nbgg_id: 237182\n---\n\n# Root\n")
+    warning = _llm_only_warning("2018")
+
+    with patch("compiler.wiki_writer._git"):
+        update_sections(str(tmp_path), "root", {"teaching": "Body."}, "Root", warning=warning)
+
+    content = (game_dir / "teaching.md").read_text()
+    assert content.startswith(warning)
+    assert content.endswith("Body.")
+
+
+def test_update_sections_raises_when_game_dir_missing(tmp_path):
+    from compiler.wiki_writer import update_sections
+    with pytest.raises(FileNotFoundError):
+        update_sections(str(tmp_path), "nonexistent-slug", {"teaching": "x"}, "Nonexistent")
+
+
+def test_update_sections_commits_only_touched_files(tmp_path):
+    from compiler.wiki_writer import update_sections
+    game_dir = tmp_path / "games" / "root"
+    game_dir.mkdir(parents=True)
+    (game_dir / "index.md").write_text("---\nbgg_id: 237182\n---\n\n# Root\n")
+
+    with patch("compiler.wiki_writer._git") as mock_git:
+        update_sections(str(tmp_path), "root", {"teaching": "New content."}, "Root")
+
+    add_calls = [c for c in mock_git.call_args_list if c.args[1] == "add"]
+    assert len(add_calls) == 1
+    assert add_calls[0].args[2] == str(game_dir / "teaching.md")
+
+    commit_calls = [c for c in mock_git.call_args_list if c.args[1] == "commit"]
+    assert len(commit_calls) == 1
+    assert "teaching" in commit_calls[0].args[3]
+    assert "Root" in commit_calls[0].args[3]

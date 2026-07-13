@@ -47,6 +47,34 @@ def write_game(
     )
 
 
+def update_sections(
+    wiki_path: str,
+    slug: str,
+    sections: dict[str, str],
+    game_name: str,
+    warning: str = "",
+) -> None:
+    game_dir = Path(wiki_path) / "games" / slug
+    if not game_dir.exists():
+        raise FileNotFoundError(f"No existing wiki entry for slug '{slug}' at {game_dir}")
+
+    for section, content in sections.items():
+        (game_dir / f"{section}.md").write_text(f"{warning}{content}")
+
+    section_names = ", ".join(sorted(sections))
+    paths = [str(game_dir / f"{s}.md") for s in sections]
+    _git(wiki_path, "add", *paths)
+    result = subprocess.run(
+        ["git", "-C", wiki_path, "diff", "--cached", "--quiet"],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        print(f"No changes to commit for {game_name} ({section_names})")
+        return
+    _git(wiki_path, "commit", "-m", f"refresh: regenerate {section_names} for {game_name}")
+    _git(wiki_path, "push")
+
+
 def _llm_only_warning(edition: str) -> str:
     return (
         "> [!WARNING]\n"
