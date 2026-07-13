@@ -36,6 +36,42 @@ def test_compile_game_returns_six_sections():
     gemini_provider.generate_multimodal.assert_not_called()
 
 
+def test_compile_game_only_sections_generates_requested_subset():
+    deepseek_provider = MagicMock()
+    deepseek_provider.generate.return_value = "# Teaching content"
+    gemini_provider = MagicMock()
+
+    sections, failures = compile_game(
+        GAME_DATA, rulebook_text=None, pdf_bytes=None,
+        deepseek_provider=deepseek_provider, gemini_provider=gemini_provider,
+        only_sections={"teaching"},
+    )
+
+    assert set(sections.keys()) == {"teaching"}
+    assert failures == []
+    assert deepseek_provider.generate.call_count == 1
+    gemini_provider.generate.assert_not_called()
+    gemini_provider.generate_multimodal.assert_not_called()
+
+
+def test_compile_game_only_sections_can_include_rules_and_setup():
+    deepseek_provider = MagicMock()
+    deepseek_provider.generate.return_value = "content"
+    gemini_provider = MagicMock()
+
+    sections, failures = compile_game(
+        GAME_DATA, rulebook_text=None, pdf_bytes=None,
+        deepseek_provider=deepseek_provider, gemini_provider=gemini_provider,
+        only_sections={"rules", "setup"},
+    )
+
+    assert set(sections.keys()) == {"rules", "setup"}
+    assert failures == []
+    # No pdf_bytes provided, so both fall back to the deepseek text path (see
+    # _compile_rules/_compile_setup) — two calls, one per requested section.
+    assert deepseek_provider.generate.call_count == 2
+
+
 def test_compile_game_with_rulebook_but_no_pdf_bytes_uses_text_path():
     deepseek_provider = MagicMock()
     deepseek_provider.generate.return_value = "# Content from rulebook"

@@ -286,12 +286,15 @@ def compile_game(
     pdf_bytes: bytes | None,
     deepseek_provider: LLMProvider,
     gemini_provider: LLMProvider,
+    only_sections: set[str] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     prompts = _prompts(game_data, rulebook_text)
     sections: dict[str, str] = {}
     failures: list[str] = []
 
     for section_name in SECTION_ORDER:
+        if only_sections is not None and section_name not in only_sections:
+            continue
         if section_name == "rules":
             _compile_rules(
                 game_data, rulebook_text, pdf_bytes, prompts["rules"],
