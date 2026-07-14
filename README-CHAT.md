@@ -29,16 +29,20 @@ through GitHub Actions workflows defined **in this repo** (`.github/workflows/`)
 
 **What is *not* in this repo**: the mechanism that takes the Markdown content from
 `mybgg-wiki` and syncs it into the Cloudflare KV namespace (`WIKI`) that the chat
-Worker reads from at request time. That sync (referred to elsewhere as
-`sync-to-kv.yml`) lives as a workflow **inside the `mybgg-wiki` repo itself**, not
-here. If rebuilding this system from scratch, that KV-sync workflow needs to be
+Worker reads from at request time. Concretely, that's `mybgg-wiki/.github/workflows/sync-to-kv.yml`
+plus `mybgg-wiki/scripts/build_catalog.py` (which walks `games/*/index.md` frontmatter
+to assemble the `catalog` JSON key — including each game's `bgg_id`, which the chat
+Worker's discovery prompt uses to skip a `bgg_search_game` round for owned games, §2.4
+— and pulls `numplays` per `bgg_id` from the live collection via
+`cors-proxy.mybgg.workers.dev/chardila/mybgg`, §1). Both live **inside the `mybgg-wiki`
+repo itself**, not here. If rebuilding this system from scratch, that pair needs to be
 recreated in (or ported into) `mybgg-wiki`, pointed at the same `WIKI` KV namespace ID
 used by `worker/wrangler.toml`. Known past bugs in that sync (documented only in this
 assistant's session memory, not in either repo): it must run `wrangler kv ... --remote`
 (a local-only push looks like it worked but silently never reaches production KV), and
-it must slugify game names consistently with `_to_slug()` in `bgg_fetcher.py` — that
-function does **not** strip accents or `ñ` (Python's `\w` is Unicode-aware), so a sync
-step that re-derives slugs differently (e.g. stripping diacritics) will orphan KV keys.
+it must slugify game names consistently with `_to_slug()` in `bgg_fetcher.py` — as of
+this writing that function normalizes accents/ñ to plain ASCII (fixed; previously it
+didn't, and a sync step re-deriving slugs differently would orphan KV keys — see §3.8).
 
 Also outside this repo: `coleccion_cardila_bgg_rules_full.csv` and `faltantes.csv`
 (both present at the repo root, tracked/untracked working files) are the input/output
@@ -116,11 +120,18 @@ Full cost analysis in `analisis_arquitectura_chat.md` (repo root). Summary:
 - **Gemini** (`gemini-3.1-flash-lite`, via Google's OpenAI-compatible endpoint) does the
   tool-calling: decides whether it needs to look something up on BGG and with what
   parameters. It's reliable at structured tool calls; DeepSeek is not, in this setup
-  (see the DSML leak bug in §2.6). Called with `reasoning_effort: 'minimal'` to keep
-  cost/latency down.
+  (see the DSML leak history in §2.6). Called at `reasoning_effort: 'minimal'` for this
+  role — the routing decision is short and mechanical.
 - **DeepSeek** (`deepseek-v4-flash`) writes the final answer once all context (catalog,
   wiki, tool results) has been assembled. It is drastically cheaper than Gemini for
-  this part (which carries the most tokens), and its Spanish prose quality is better.
+  this part (which carries the most tokens), and — once its DSML leak is neutralized by
+  flattening the tool history (§2.4) — it's also the more careful synthesizer: verified
+  in production to cross-check a full ~180-game catalog correctly, which Gemini
+  flash-lite gets wrong even at `medium` reasoning effort.
+- **Gemini again, as a rescue** (`callGemini` accepts a `model`/`reasoningEffort`
+  override; the rescue call uses `medium`) synthesizes only if DeepSeek fails or leaks
+  twice in a row. This is a second, distinct role for the same client — see the code
+  comment on `callGemini()` in `worker/src/index.js`.
 
 This split is cheaper than resolving everything with a single model for tool-using
 queries (see the cost simulation in `analisis_arquitectura_chat.md`), and identical in
@@ -166,20 +177,46 @@ max 20 requests per IP (`CF-Connecting-IP`), counter stored in the same `WIKI` K
 
 **Tool-calling + synthesis loop (`runChatCompletionStream`)**:
 1. Up to `MAX_TOOL_ROUNDS = 2` rounds against **Gemini** with BGG tools available
-   (`BGG_TOOL_DEFINITIONS`). Each round emits an SSE `thinking` status.
+   (`BGG_TOOL_DEFINITIONS`). Each round emits an SSE `thinking` status. Both the
+   `discovery` and `deep_dive`/`teach` system prompts state this budget explicitly
+   (interpolated from the constants, so the prompt text can't drift from the actual
+   caps) and instruct the model to batch independent lookups into one round instead of
+   spending a round per game — `bgg_search_game` accepts several `queries` at once
+   (fanned out `SEARCH_CONCURRENCY = 5` at a time, capped at `MAX_MATCHES_PER_QUERY = 10`
+   matches per query) and `bgg_get_game_details` accepts several `bgg_ids` in one call
+   (both still accept the old single-value shape too, for models that emit it). Catalog
+   entries and the deep-dive Overview frontmatter also expose the game's own `bgg_id` so
+   the model can call BGG tools directly instead of burning a round on
+   `bgg_search_game` first.
    - If Gemini doesn't request a tool in round 1, that answer streams straight to the
      user (never touching DeepSeek) — the fast, cheap path for simple questions.
    - If it does request tools, they're executed (max `MAX_TOOL_CALLS_PER_ROUND = 3` per
      round, in parallel) via `executeBggTool()`, a more specific status is emitted
      (`searching` / `details` / `forum` depending on the tool), and the results are
-     appended to the message history as `role: "tool"` turns.
+     appended to the message history as `role: "tool"` turns. If Gemini requested more
+     than `MAX_TOOL_CALLS_PER_ROUND` calls, the extras are dropped and a
+     `console.warn('cap-tuning: ...')` line records it — same for hitting the round cap
+     below — so Workers Logs (§2.6) can show whether real traffic ever needs the caps
+     raised before actually raising them.
    - If round 2 is reached and Gemini still wants more tools, the loop is cut off
-     (`hitToolRoundCap`) and a system note (`noMoreToolsNote`) is appended telling the
-     synthesis model no more lookups are available — this stops DeepSeek from trying to
-     hallucinate a tool call of its own.
-2. **Final synthesis** against **DeepSeek**, with a `writing` status, using the full
-   accumulated history (system + catalog/wiki + tool results + user message). Its
-   response streams to the frontend token by token.
+     (`hitToolRoundCap`) — synthesis proceeds without further lookups.
+2. **Final synthesis**, with a `writing` status, using the full accumulated history
+   (system + catalog/wiki + tool results + user message):
+   - **DeepSeek synthesizes first, unconditionally** (whether or not the tool-round cap
+     was hit) — but never against the raw history. `flattenToolExchanges()` collapses
+     every `tool_calls` assistant turn and `role: "tool"` result into one plain-text
+     system message (`• tool_name {args}\n{result}`) with a "no further lookups
+     possible" header baked in, and drops the original tool-call turns entirely. This
+     is the fix for the DSML leak (§2.6): DeepSeek's context no longer contains any
+     tool-call *syntax* to imitate.
+   - If that still fails (`isIncompleteStream` or a DSML leak slips through anyway) on
+     both the attempt and its retry, **Gemini rescues** on the *unflattened* history
+     plus `noMoreToolsNote()`, called at `reasoningEffort: 'medium'` (writing a correct
+     answer needs more than the `minimal` effort used for tool routing) — and this
+     retries once too, discarding the result if Gemini itself tries to call a tool.
+   - Only if the Gemini rescue also fails does the user see the generic
+     `fallbackMessage()`.
+   - Its response streams to the frontend token by token.
 
 **Streaming, buffering, and error handling**:
 - Each round is called through `attemptBufferedRoundWithRetry`, which buffers all
@@ -190,9 +227,13 @@ max 20 requests per IP (`CF-Connecting-IP`), counter stored in the same `WIKI` K
     stream short).
   - (DeepSeek round only) `looksLikeLeakedToolCall`: DeepSeek sometimes leaks a failed
     tool-call attempt as raw `"DSML"` text instead of structuring it — a known DeepSeek
-    bug, not fixable on this side, mitigated with a retry.
-  - If the retry hits the same problem again, a localized fallback message
-    (`fallbackMessage`) is returned instead of showing the user garbage.
+    bug, not fixable on this side. As of the `flattenToolExchanges()` fix this fires
+    far less often (validated at 0/4 and later 11/11 spot-checked answers in
+    production); the retry + Gemini rescue above remain as a safety net for whatever
+    still slips through.
+  - If the retry hits the same problem again, the Gemini rescue kicks in (round 2) or
+    a localized fallback message (`fallbackMessage`) is returned (Gemini rescue itself
+    failing) instead of showing the user garbage.
 - The wire protocol to the frontend is **Server-Sent Events** (`text/event-stream`),
   three event shapes, each as `data: {...}\n\n`:
   - `{"status": "thinking"|"searching"|"details"|"forum"|"writing"}` — progress
@@ -227,13 +268,29 @@ max 20 requests per IP (`CF-Connecting-IP`), counter stored in the same `WIKI` K
 
 - **DeepSeek DSML leak**: `deepseek-v4-flash` sometimes leaks a tool-call attempt as
   raw `"DSML"` text during the synthesis round (a DeepSeek bug, not this codebase's).
-  Mitigated with detection (`looksLikeLeakedToolCall`) + single retry + fallback error
-  message if it persists.
+  Root cause: DeepSeek's own tool-call machinery in its context (`tool_calls` turns,
+  `role: "tool"` messages) gives it syntax to imitate. Root-caused and fixed by
+  `flattenToolExchanges()` (§2.4) — verified in production across two four-question
+  batteries: 3/4 tool-using answers leaked before the fix, 0/4 after, with all 11
+  spot-checked catalog claims correct. Detection (`looksLikeLeakedToolCall`) + retry +
+  Gemini rescue + fallback error message remain as defense in depth for whatever still
+  gets through.
 - **Intermittent stream cutoffs**: observed in production, Gemini returning
   intermittent 503s that cut the stream short with no `finish_reason` (a 3-token
   response, then nothing). Mitigated the same way (`isIncompleteStream`).
+- **`gemini-3.1-flash` (the non-`-lite` model) does not exist** — an earlier attempt to
+  use it for the Gemini rescue synthesis silently 404'd on every call, so that rescue
+  path never actually ran until it was caught and switched back to `gemini-3.1-flash-lite`
+  at `reasoningEffort: 'medium'`. Worth remembering before pointing any `callGemini()`
+  caller at a different model name.
 - The `bgg.cardila.com/api/*` → Worker route lives outside this repo (Cloudflare
   dashboard), so there's no single versioned place documenting it — see §5.6.
+
+**Observability**: `worker/wrangler.toml` has `[observability] enabled = true` — the
+Worker's `console.error`/`console.warn` output (DSML leak retries, cut streams,
+cap-tuning lines, unhandled exceptions) persists in Cloudflare's Workers Logs for about
+3 days, so a bad chat reply can be diagnosed after the fact instead of only via a live
+`wrangler tail` session.
 
 ### 2.7 Endpoints
 
@@ -255,12 +312,12 @@ All CORS-scoped to `https://bgg.cardila.com` and `http://localhost*`
 
 | File | Covers |
 |---|---|
-| `runChatCompletion.test.js` | Full `handleChat` flow / end-to-end SSE streaming. |
+| `runChatCompletion.test.js` | Full `handleChat` flow / end-to-end SSE streaming, including the DeepSeek-first/Gemini-rescue synthesis order and `flattenToolExchanges()`. |
 | `deepseekStream.test.js` | DeepSeek SSE stream parsing (`parseDeepSeekStream`). |
-| `bggTools.test.js` | All 4 BGG tools (`bgg_search_game`, `bgg_get_game_details`, `bgg_search_forum`, `bgg_get_thread`), including `[quote]`/`[q]` stripping and post truncation. |
+| `bggTools.test.js` | All 4 BGG tools (`bgg_search_game`, `bgg_get_game_details`, `bgg_search_forum`, `bgg_get_thread`), including `[quote]`/`[q]` stripping, post truncation, and the batched `queries`/`bgg_ids` array forms (plus the legacy single-value forms). |
 | `deepDiveContext.test.js` | Base game + expansions context assembly. |
 | `teachMode.test.js` | End-to-end teach mode. |
-| `minimizeGame.test.js` | Catalog minimization for discovery mode. |
+| `minimizeGame.test.js` | Catalog minimization for discovery mode, including passing `bgg_id` through when present. |
 | `rateLimiter.test.js` | Fixed-window rate limiting over KV. |
 | `statusForToolCalls.test.js` | Mapping tool calls to status labels (`searching`/`details`/`forum`). |
 | `sseHelpers.js` | Shared helpers to fake SSE responses in tests. |
@@ -275,26 +332,38 @@ Markdown wiki entry that the chat's deep-dive/teach modes read at runtime. It ru
 
 ### 3.1 `add_game.py` — import a single game
 
-Entry point: `python scripts/compiler/add_game.py --bgg_id <id> --status <status> --wiki_path <path> [--pdf_url <url>] [--edition <label>]`.
+Entry point: `python scripts/compiler/add_game.py --bgg_id <id> --status <status> --wiki_path <path> [--pdf_url <url>] [--edition <label>] [--name <override>] [--base_game_bgg_id <id>]`.
 
 1. Fetches BGG metadata for `bgg_id` via `bgg_fetcher.fetch_game()`.
-2. Resolves an edition label (`--edition`, or falls back to the BGG publication year)
+2. If `--name` is given, overrides `game_data["name"]` and re-derives the slug from it
+   (`_to_slug(name)`) before the edition suffix is appended — for BGG entries that
+   bundle multiple distinct maps/variants under one id (e.g. Ticket to Ride's "Map
+   Collection" expansions, which cover two unrelated maps with separate rulebooks
+   each), letting each map become its own wiki entry instead of colliding on the
+   single BGG-provided title.
+3. Resolves an edition label (`--edition`, or falls back to the BGG publication year)
    and appends it to the slug (e.g. `root-2018`).
-3. If the game is an expansion, looks up its base game inside the wiki
-   (`find_base_game_in_wiki()`, by scanning `games/*/index.md` frontmatter for a
-   matching `bgg_id`) and aborts if the base game hasn't been imported yet.
-4. If `--pdf_url` is given: downloads the PDF (`pdf_fetcher.fetch_pdf`) and extracts
+4. If `--base_game_bgg_id` is given, it overrides BGG's own "inbound expansion" link —
+   forces `is_expansion = True` and `base_game_id` to the given value regardless of
+   what `fetch_game()` returned. Useful when the wiki's intended dependency differs
+   from BGG's canonical one (e.g. an expansion BGG links to game A, filed under a
+   related game B instead because that's what the user actually owns/wants it under).
+5. If the game is an expansion (BGG's own link, or the override above), looks up its
+   base game inside the wiki (`find_base_game_in_wiki()`, by scanning `games/*/index.md`
+   frontmatter for a matching `bgg_id`) and aborts if the base game hasn't been
+   imported yet.
+6. If `--pdf_url` is given: downloads the PDF (`pdf_fetcher.fetch_pdf`) and extracts
    its text (`pdf_parser.extract_text`, via `pdfplumber`) to use as the authoritative
    rulebook source. If no `--pdf_url`, `--edition` is mandatory and content is
    generated from the model's general knowledge instead (marked with a warning banner
    in the output, `_llm_only_warning`).
-5. Compiles all wiki sections via `llm_compiler.compile_game()` (§3.2).
-6. For any of the game's mechanics that don't already have a `mechanics/{name}.md`
+7. Compiles all wiki sections via `llm_compiler.compile_game()` (§3.2).
+8. For any of the game's mechanics that don't already have a `mechanics/{name}.md`
    page, generates a short description (`generate_mechanic_description()`) and creates
    or updates that mechanic's cross-reference page (`sync_mechanic_pages()` /
    `mechanic_page_exists()`, in `wiki_writer.py`) — this is what builds the mechanics
    graph mentioned in `analisis_generacion_wiki.md` §4.
-7. Writes everything to `{wiki_path}/games/{slug}/` and commits + pushes
+9. Writes everything to `{wiki_path}/games/{slug}/` and commits + pushes
    (`write_game()`, §3.5).
 
 Used directly by `.github/workflows/import-game.yml` (manual `workflow_dispatch`, one
@@ -347,6 +416,24 @@ Expansions get an extra instruction block (`_expansion_block`) telling the model
 describe *only* what the expansion adds/changes and assume the reader already knows
 the base game — this is what lets `deepDiveContext.js` on the Worker side present
 expansion sections as deltas instead of restating the whole ruleset.
+
+**Canonical-name lock (`_name_lock_note()`)**: a regional/translated rulebook can rename
+the game itself or its components (observed in production: a Russian edition of
+"Sherlock" whose text called the pointer piece "Увалень бродяга"/"Uvalen Brodyaga" —
+the generated `rules.md` picked that up as if it were the game's title). Every prompt
+that includes rulebook text — via `_rulebook_block()`, which is included in the `rb`
+block of every single-shot section (`index`, `setup`, `rules` fallback, `teaching`,
+`faq`, `glossary`) — now appends an explicit instruction to always refer to the game by
+its exact `game_data["name"]`, plus a slice of the official BGG `description` as a
+naming anchor for components. The per-chapter rules path (`_rules_chapter_prompt()`)
+doesn't go through `_rulebook_block()` at all (it sends raw PDF pages, not `rb` text),
+so it gets the same instruction injected directly. This is also where the *language*
+of the rulebook is forced to English regardless of the source PDF's language —
+`plan_rules_outline()`'s own system prompt used to have no language instruction at all
+(unlike the shared `SYSTEM` constant every other section's prompt is built from), so a
+non-English rulebook (e.g. German) produced German chapter titles that then dragged
+the whole per-chapter `rules.md` output into German too; both `plan_rules_outline()`
+and `_rules_chapter_prompt()` now explicitly require English output.
 
 `generate_mechanic_description(name, provider)` is the 1-2 sentence generator used for
 new `mechanics/*.md` pages (via DeepSeek).
@@ -451,7 +538,18 @@ format was run this way across the whole existing wiki.
 
 ### 3.7 PDF handling helpers
 
-- **`pdf_fetcher.py`** — `fetch_pdf(url)`: plain `requests.get`, returns raw bytes.
+- **`pdf_fetcher.py`** — `fetch_pdf(url)`: `requests.get` with a browser-like
+  `User-Agent` (some hosts, notably BGG's own Cloudflare-protected
+  `file/download_redirect/...` links, are more likely to serve a bot-challenge page to
+  the default `python-requests` UA — this reduces that risk; redirects, including
+  BGG's stable link → short-lived presigned-S3 302, are followed automatically by
+  `requests`, no special handling needed) and a magic-byte check on the response: if
+  the content doesn't start with `%PDF-`, raises a `ValueError` naming the actual
+  `content-type` instead of silently returning non-PDF bytes (an HTML challenge page,
+  say) for `pdf_parser`/`pypdf` to fail on cryptically downstream. Always store the
+  *stable* BGG redirect link as `pdf_url` (not a resolved, expiring one — those come
+  back with `X-Amz-Expires=120` and are dead within two minutes) so future
+  `refresh_sections.py` runs can still re-fetch it.
 - **`pdf_parser.py`** — `extract_text(pdf_bytes)`: page-by-page text extraction via
   `pdfplumber`, joined with blank lines. This is what's fed to the outline-planning
   step and to text-only fallback generation; it is *not* used when Gemini reads the PDF
@@ -469,11 +567,16 @@ reshapes the result into what the compiler needs: `id`, `name`, `slug` (via
 string, or just the number if min==max), `min_players`/`max_players`, `weight`, `rank`,
 `playing_time`, `yearpublished`, and — if this game is itself an expansion —
 `is_expansion` + `base_game_id` (BGG's own "inbound expansion" link back to its base
-game). `_to_slug()` lowercases, strips anything that isn't a word character/space/dash,
-and collapses whitespace/underscores to single dashes — note it does **not** strip
-accents or `ñ` (Unicode `\w` keeps them), so a game named e.g. "Añón" would slugify to
-`añón`, not `anon`; keep this in mind if a downstream consumer (like a KV-sync step)
-re-derives slugs with different normalization.
+game). `_to_slug()` first normalizes to plain ASCII (`unicodedata.normalize("NFKD", ...)`
++ encode/decode with errors ignored — turns "é" into "e", "ñ" into "n", etc.), then
+lowercases, strips anything that isn't a word character/space/dash, and collapses
+whitespace/underscores to single dashes. This normalization step is a fix, not the
+original behavior: a game named "Valdés" used to slugify to `valdés-2021`, which the
+chat Worker's slug validation (`/^[a-z0-9-]+$/`, §2.4) rejected outright — `deep_dive`/
+`teach` mode for that game returned "Invalid game slug." with no way to select it in
+the UI. Games already imported before this fix need a manual rename (folder + the
+`slug:` frontmatter field + any `[[wikilink]]`s pointing at the old slug) to pick up
+clean ASCII slugs.
 
 ---
 
@@ -534,7 +637,7 @@ Run hourly by `.github/workflows/index.yml` (§5.1) and manually for local devel
 | Workflow | Trigger | What it runs |
 |---|---|---|
 | `index.yml` | Hourly cron (`0 * * * *`) + manual | `scripts/download_and_index.py --debug` — refreshes `gamecache.sqlite.gz` from the user's live BGG collection and re-uploads it as a GitHub Release asset. Self-disables (skips with a notice) if `GAMECACHE_GITHUB_TOKEN` (or the deprecated `MYBGG_GITHUB_TOKEN` fallback) isn't set as a secret. |
-| `import-game.yml` | Manual (`workflow_dispatch`, inputs: `bgg_id`, `pdf_url`, `edition`, `status`) | Checks out both `mybgg` and `mybgg-wiki` (via `WIKI_GITHUB_TOKEN`), then runs `scripts/compiler/add_game.py` — imports **one** game into the wiki. |
+| `import-game.yml` | Manual (`workflow_dispatch`, inputs: `bgg_id`, `pdf_url`, `edition`, `name`, `base_game_bgg_id`, `status`) | Checks out both `mybgg` and `mybgg-wiki` (via `WIKI_GITHUB_TOKEN`), then runs `scripts/compiler/add_game.py` — imports **one** game into the wiki. |
 | `bulk-import-games.yml` | Manual (`workflow_dispatch`, inputs: `csv_path` default `coleccion_cardila_bgg_rules_full.csv`, `status`, `limit`, `only`) | Same two-repo checkout, then `scripts/compiler/bulk_import.py` — imports every not-yet-imported row from the CSV, with a Markdown summary written to the Actions run summary. |
 | `pages.yml` | Push to `master` + manual | Deploys the static site (this whole repo, path `.`) to GitHub Pages. **Does not touch the Cloudflare Worker** — see the deployment note in §6.5. |
 | `keepalive.yml` | Cron every ~2 months (Jan/Mar/May/Jul/Sep/Nov) + manual | An empty commit, purely to keep the repository "active" for GitHub's scheduled-workflow-disabling policy (GitHub disables cron workflows on repos with no activity for 60 days). Unrelated to chat/content, listed here for completeness. |
@@ -576,6 +679,8 @@ gh workflow run import-game.yml -R chardila/mybgg \
 | `bgg_id` | **yes** | The numeric BGG game id — the number in the game's BGG URL, e.g. `boardgamegeek.com/boardgame/224517/...` → `224517`. |
 | `pdf_url` | no | Direct URL to a rulebook PDF for the exact physical edition owned. When given, that PDF becomes the authoritative source for every section (§3.2); omitted, generation falls back to the model's general knowledge and every section gets a "not from a verified rulebook" warning banner. |
 | `edition` | conditionally | An edition label (e.g. `"2nd Edition"`, `"Fan Edition"`). **Required if `pdf_url` is omitted** (there's no PDF to infer an edition from); if omitted while `pdf_url` is given, it defaults to the BGG publication year. Used only as a slug suffix and a label in prompts/warnings — it does not change which BGG data is fetched. |
+| `name` | no | Override the BGG-provided name (and re-derive the slug from it). For a BGG id that bundles multiple distinct maps/variants under one entry (e.g. Ticket to Ride's "Map Collection" expansions, each covering two unrelated maps with separate rulebooks) — import the same `bgg_id` once per map, each with a distinct `--name` and `--pdf_url`, to get separate, independently-selectable wiki entries instead of one that collides on the shared title. |
+| `base_game_bgg_id` | no | Override which base game this counts as an expansion of, ignoring BGG's own "inbound expansion" link. Use when the wiki's intended dependency differs from BGG's canonical one — e.g. an expansion BGG links to game A, but that should be filed under a different, related game B the user actually owns. |
 | `status` | **yes** | Ownership status, one of `owned`, `wishlist`, `borrowed`, `friend`, `played`, `archived`. Stored in `index.md` frontmatter; doesn't affect content generation. |
 
 **What you get**: the workflow checks out both repos, runs
@@ -805,8 +910,13 @@ browser.
 | Rate limit | 20 req/IP/60s | `worker/src/rateLimiter.js` |
 | Expansions allowed per request | max 10 | `handleChat()` |
 | Forum posts per thread | max 10, 1500 chars each | `worker/src/bggTools.js` |
-| Gemini model (chat) | `gemini-3.1-flash-lite`, `reasoning_effort: minimal` | `callGemini()` |
+| Batched BGG search concurrency | 5 (`SEARCH_CONCURRENCY`) | `worker/src/bggTools.js` |
+| Batched BGG search matches per query | 10 (`MAX_MATCHES_PER_QUERY`) | `worker/src/bggTools.js` |
+| Gemini model (chat, tool routing) | `gemini-3.1-flash-lite`, `reasoning_effort: minimal` | `callGemini()` default |
+| Gemini model (chat, rescue synthesis) | `gemini-3.1-flash-lite`, `reasoning_effort: medium` | `callGemini()` override in the rescue call |
 | DeepSeek model (chat) | `deepseek-v4-flash` | `callDeepSeek()` |
 | Gemini model (compiler) | `gemini-3.1-flash-lite` | `llm_provider.GeminiProvider` |
 | DeepSeek model (compiler) | `deepseek-chat` | `llm_provider.DeepSeekProvider` |
 | Max rules chapters (outline pass) | 8 (`MAX_RULES_CHAPTERS`) | `llm_compiler.py` |
+
+⚠️ `gemini-3.1-flash` (without `-lite`) does not exist — see §2.6.
