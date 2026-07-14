@@ -76,10 +76,10 @@ describe('executeBggTool: bgg_get_game_details', () => {
       </items>`;
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
 
-    const { result, error } = await executeBggTool('bgg_get_game_details', { bgg_id: 266192 }, 'tok123');
+    const { result, error } = await executeBggTool('bgg_get_game_details', { bgg_ids: [266192] }, 'tok123');
 
     expect(error).toBeUndefined();
-    expect(result).toEqual({
+    expect(result).toEqual([{
       id: 266192,
       name: 'Wingspan',
       year: 2019,
@@ -91,16 +91,60 @@ describe('executeBggTool: bgg_get_game_details', () => {
       categories: ['Animals'],
       mechanics: ['Engine Building'],
       expansions: [{ id: 300217, name: 'Wingspan: European Expansion' }],
-    });
+    }]);
   });
 
-  it('returns an error when the game id does not exist', async () => {
+  it('fetches several games in a single BGG request when given multiple ids', async () => {
+    const xml = `<?xml version="1.0"?>
+      <items termsofuse="x">
+        <item type="boardgame" id="266192">
+          <name type="primary" sortindex="1" value="Wingspan"/>
+          <yearpublished value="2019"/>
+        </item>
+        <item type="boardgame" id="167791">
+          <name type="primary" sortindex="1" value="Terraforming Mars"/>
+          <yearpublished value="2016"/>
+        </item>
+      </items>`;
+    const mockFetch = vi.fn().mockResolvedValue(fakeXmlResponse(xml));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { result, error } = await executeBggTool('bgg_get_game_details', { bgg_ids: [266192, 167791] }, 'tok123');
+
+    expect(error).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toContain('id=266192%2C167791');
+    expect(result.map((g) => g.name)).toEqual(['Wingspan', 'Terraforming Mars']);
+  });
+
+  it('still accepts the legacy single bgg_id argument', async () => {
+    const xml = `<?xml version="1.0"?>
+      <items termsofuse="x">
+        <item type="boardgame" id="266192">
+          <name type="primary" sortindex="1" value="Wingspan"/>
+        </item>
+      </items>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result, error } = await executeBggTool('bgg_get_game_details', { bgg_id: 266192 }, 'tok123');
+    expect(error).toBeUndefined();
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('Wingspan');
+  });
+
+  it('returns an error when no requested id exists', async () => {
     const xml = `<?xml version="1.0"?><items termsofuse="x"></items>`;
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
 
-    const { result, error } = await executeBggTool('bgg_get_game_details', { bgg_id: 999999999 }, 'tok123');
+    const { result, error } = await executeBggTool('bgg_get_game_details', { bgg_ids: [999999999] }, 'tok123');
     expect(result).toBeUndefined();
     expect(error).toBe('Game 999999999 not found');
+  });
+
+  it('returns an error when called without any id', async () => {
+    const { result, error } = await executeBggTool('bgg_get_game_details', {}, 'tok123');
+    expect(result).toBeUndefined();
+    expect(error).toBe('bgg_ids is required');
   });
 });
 

@@ -65,13 +65,17 @@ export const BGG_TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'bgg_get_game_details',
-      description: 'Get rating, complexity weight, player count, mechanics, categories, and expansions for a specific BGG game id.',
+      description: 'Get rating, complexity weight, player count, mechanics, categories, and expansions for one or more BGG game ids. Pass all the ids you need in a single call (e.g. when comparing several games) instead of calling once per game.',
       parameters: {
         type: 'object',
         properties: {
-          bgg_id: { type: 'integer', description: 'BoardGameGeek numeric game id' },
+          bgg_ids: {
+            type: 'array',
+            items: { type: 'integer' },
+            description: 'BoardGameGeek numeric game ids (one or more)',
+          },
         },
-        required: ['bgg_id'],
+        required: ['bgg_ids'],
       },
     },
   },
@@ -122,11 +126,7 @@ async function searchGame({ query, type }, token) {
   });
 }
 
-async function getGameDetails({ bgg_id }, token) {
-  const data = await bggFetch('/thing', { id: bgg_id, stats: 1 }, token);
-  const item = asArray(data.items?.item)[0];
-  if (!item) throw new Error(`Game ${bgg_id} not found`);
-
+function parseGameItem(item) {
   const names = asArray(item.name);
   const links = asArray(item.link);
   const byType = (t) =>
@@ -145,6 +145,16 @@ async function getGameDetails({ bgg_id }, token) {
     mechanics: byType('boardgamemechanic').map((m) => m.name),
     expansions: byType('boardgameexpansion'),
   };
+}
+
+async function getGameDetails({ bgg_ids, bgg_id }, token) {
+  // bgg_id is the legacy single-id form; models occasionally still emit it.
+  const ids = (Array.isArray(bgg_ids) && bgg_ids.length ? bgg_ids : [bgg_id]).filter((id) => id != null);
+  if (!ids.length) throw new Error('bgg_ids is required');
+  const data = await bggFetch('/thing', { id: ids.join(','), stats: 1 }, token);
+  const items = asArray(data.items?.item);
+  if (!items.length) throw new Error(`Game ${ids.join(', ')} not found`);
+  return items.map(parseGameItem);
 }
 
 async function searchForum({ bgg_id, query }, token) {

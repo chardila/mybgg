@@ -128,6 +128,40 @@ describe('minimizeGame', () => {
   it('handles an empty catalog', () => {
     expect([].map((g) => minimizeGame(g))).toEqual([]);
   });
+
+  it('passes bgg_id through when the catalog entry has one, on both base games and nested expansions', () => {
+    const game = {
+      slug: 'wingspan-2019',
+      name: 'Wingspan',
+      bgg_id: 266192,
+      players: '1-5',
+      weight: '2.4',
+      mechanics: [],
+      categories: [],
+      status: 'owned',
+      rank: '23',
+      numplays: 5,
+      expansions: [
+        {
+          slug: 'wingspan-european-expansion-2019',
+          name: 'Wingspan: European Expansion',
+          bgg_id: 290837,
+          players: '1-5',
+          weight: '2.5',
+          mechanics: [],
+          categories: [],
+          status: 'owned',
+          rank: 'Not Ranked',
+          numplays: 0,
+          expansions: [],
+        },
+      ],
+    };
+
+    const minimized = minimizeGame(game);
+    expect(minimized.bgg_id).toBe(266192);
+    expect(minimized.expansions[0].bgg_id).toBe(290837);
+  });
 });
 
 describe('parseCatalog', () => {
