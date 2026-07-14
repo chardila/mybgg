@@ -405,12 +405,20 @@ async function runChatCompletionStream(messages, env, language, write) {
 
     toolsWereCalled = true;
     const toolCalls = result.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+    if (result.toolCalls.length > toolCalls.length) {
+      console.warn(
+        `cap-tuning: tool round ${round} requested ${result.toolCalls.length} tool calls, dropped ${result.toolCalls.length - toolCalls.length} over MAX_TOOL_CALLS_PER_ROUND=${MAX_TOOL_CALLS_PER_ROUND}`
+      );
+    }
     await write(sseStatusFormat(statusForToolCalls(toolCalls)));
     const toolMessages = await executeToolCalls(toolCalls, env);
     currentMessages = [...currentMessages, toolCallsAssistantMessage(toolCalls), ...toolMessages];
 
     if (round === MAX_TOOL_ROUNDS) {
       hitToolRoundCap = true;
+      console.warn(
+        `cap-tuning: all MAX_TOOL_ROUNDS=${MAX_TOOL_ROUNDS} tool rounds used with tool calls still requested; synthesis proceeds without further lookups`
+      );
     }
   }
 
