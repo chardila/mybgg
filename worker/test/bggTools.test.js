@@ -48,6 +48,67 @@ describe('executeBggTool: bgg_search_game', () => {
     const { result } = await executeBggTool('bgg_search_game', { query: 'zzz-nonexistent' }, 'tok123');
     expect(result).toEqual([]);
   });
+
+  it('runs one BGG search per query and groups results when given several queries', async () => {
+    const xmlFor = (id, name) => `<?xml version="1.0"?>
+      <items total="1" termsofuse="x">
+        <item type="boardgame" id="${id}">
+          <name type="primary" value="${name}"/>
+          <yearpublished value="2019"/>
+        </item>
+      </items>`;
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(fakeXmlResponse(xmlFor(266192, 'Wingspan')))
+      .mockResolvedValueOnce(fakeXmlResponse(xmlFor(167791, 'Terraforming Mars')));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { result, error } = await executeBggTool(
+      'bgg_search_game',
+      { queries: ['Wingspan', 'Terraforming Mars'] },
+      'tok123'
+    );
+
+    expect(error).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([
+      { query: 'Wingspan', matches: [{ id: 266192, type: 'boardgame', name: 'Wingspan', year: 2019 }] },
+      { query: 'Terraforming Mars', matches: [{ id: 167791, type: 'boardgame', name: 'Terraforming Mars', year: 2019 }] },
+    ]);
+  });
+
+  it('keeps the flat result shape when queries has a single entry', async () => {
+    const xml = `<?xml version="1.0"?>
+      <items total="1" termsofuse="x">
+        <item type="boardgame" id="266192">
+          <name type="primary" value="Wingspan"/>
+          <yearpublished value="2019"/>
+        </item>
+      </items>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result } = await executeBggTool('bgg_search_game', { queries: ['Wingspan'] }, 'tok123');
+    expect(result).toEqual([{ id: 266192, type: 'boardgame', name: 'Wingspan', year: 2019 }]);
+  });
+
+  it('caps matches per query in batched searches', async () => {
+    const manyItems = Array.from(
+      { length: 15 },
+      (_, i) => `<item type="boardgame" id="${i + 1}"><name type="primary" value="Catan ${i + 1}"/></item>`
+    ).join('');
+    const xml = `<?xml version="1.0"?><items total="15" termsofuse="x">${manyItems}</items>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeXmlResponse(xml)));
+
+    const { result } = await executeBggTool('bgg_search_game', { queries: ['Catan', 'Carcassonne'] }, 'tok123');
+    expect(result[0].matches).toHaveLength(10);
+    expect(result[1].matches).toHaveLength(10);
+  });
+
+  it('returns an error when called without any query', async () => {
+    const { result, error } = await executeBggTool('bgg_search_game', {}, 'tok123');
+    expect(result).toBeUndefined();
+    expect(error).toBe('queries is required');
+  });
 });
 
 describe('executeBggTool: bgg_get_game_details', () => {

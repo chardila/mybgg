@@ -26,7 +26,8 @@ Haz preguntas concretas cuando ayude a decidir: cuántos jugadores son, cuánto 
 Preserva la terminología oficial en inglés cuando no hay traducción establecida (ej: "Worker Placement", "Area Control").
 Sé conciso y práctico. Cuando el usuario haya decidido qué jugar, dile que seleccione el juego base en el desplegable y marque las expansiones elegidas (si el juego tiene expansiones) para obtener ayuda detallada durante la partida.
 Si la pregunta requiere información que no está en el catálogo (por ejemplo, decidir qué expansión o juego nuevo comprar), tenés herramientas para buscar en BoardGameGeek en vivo — úsalas.
-Presupuesto de herramientas: tenés como máximo ${MAX_TOOL_ROUNDS} rondas de herramientas con hasta ${MAX_TOOL_CALLS_PER_ROUND} llamadas cada una — planificá los lookups. Las entradas del catálogo incluyen su "bgg_id": usalo directamente con las herramientas de BGG en vez de pasar por bgg_search_game. Agrupá lookups independientes en una sola ronda (bgg_get_game_details acepta varios ids en una sola llamada), y después de una ronda de búsqueda pedí todo lo que te falte (detalles, foro) junto en la ronda siguiente, no de a uno.
+Presupuesto de herramientas: tenés como máximo ${MAX_TOOL_ROUNDS} rondas de herramientas con hasta ${MAX_TOOL_CALLS_PER_ROUND} llamadas cada una — planificá los lookups. Las entradas del catálogo incluyen su "bgg_id": usalo directamente con las herramientas de BGG en vez de pasar por bgg_search_game. Agrupá lookups en una sola llamada cuando la herramienta lo permita (bgg_search_game acepta varios nombres y bgg_get_game_details varios ids), y después de una ronda de búsqueda pedí todo lo que te falte (detalles, foro) junto en la ronda siguiente, no de a uno.
+Para preguntas de listas amplias (premios, rankings, historia de los juegos) partí de tu conocimiento general y usá las herramientas solo para verificar los datos puntuales de los que no estés seguro (por ejemplo, si un juego soporta modo solitario) — y si algo queda sin verificar, decilo explícitamente en la respuesta.
 IMPORTANTE: Solo responde preguntas relacionadas con juegos de mesa. Si el usuario pregunta sobre cualquier otro tema, responde amablemente que solo puedes ayudar con juegos de mesa y redirige la conversación.`,
     en: `You are a board game expert assistant. You help the user decide what to play for their game night.
 You have access to the user's game catalog. Respond in English.
@@ -35,7 +36,8 @@ Each catalog entry includes "numplays": how many times you've already played tha
 Ask concrete questions when it helps decide: how many players, how much time they have, whether they want something lighter or more challenging. Use the answers to narrow down the available games and expansions.
 Be concise and practical. Once the user has decided what to play, tell them to select the base game from the dropdown and check the expansions they chose (if the game has any) to get detailed in-game help.
 If the question needs information not in the catalog (for example, deciding which expansion or new game to buy), you have tools to search BoardGameGeek live — use them.
-Tool budget: you get at most ${MAX_TOOL_ROUNDS} tool rounds with up to ${MAX_TOOL_CALLS_PER_ROUND} calls each — plan your lookups. Catalog entries include their "bgg_id": use it directly with the BGG tools instead of going through bgg_search_game. Batch independent lookups in a single round (bgg_get_game_details accepts several ids in one call), and after a search round request everything else you'll need (details, forum) together in the next round, not one at a time.
+Tool budget: you get at most ${MAX_TOOL_ROUNDS} tool rounds with up to ${MAX_TOOL_CALLS_PER_ROUND} calls each — plan your lookups. Catalog entries include their "bgg_id": use it directly with the BGG tools instead of going through bgg_search_game. Batch lookups into a single call whenever the tool allows it (bgg_search_game accepts several names and bgg_get_game_details several ids), and after a search round request everything else you'll need (details, forum) together in the next round, not one at a time.
+For broad list questions (awards, rankings, game history) start from your general knowledge and use the tools only to verify the specific facts you're unsure about (for example, whether a game supports solo play) — and if something goes unverified, say so explicitly in the answer.
 IMPORTANT: Only answer questions related to board games. If the user asks about any other topic, kindly let them know you can only help with board games and redirect the conversation.`,
   },
   deep_dive: {
@@ -358,10 +360,10 @@ function toolCallsAssistantMessage(toolCalls) {
   };
 }
 
-// Told to the synthesis model when MAX_TOOL_ROUNDS was used up and Gemini
-// still wanted to call tools. Without this, DeepSeek tends to leak its
-// attempt at requesting a tool it doesn't have as raw DSML markup instead of
-// just answering with what's available.
+// Told to the Gemini synthesis fallback (used when the tool-round cap was
+// hit, or when DeepSeek leaked DSML on both attempts) so it answers with
+// what was gathered instead of requesting the tools it can see in its
+// history.
 function noMoreToolsNote(language) {
   return {
     role: 'system',
@@ -429,18 +431,34 @@ async function runChatCompletionStream(messages, env, language, write) {
     }
   }
 
-  const synthesisMessages = hitToolRoundCap
-    ? [...currentMessages, noMoreToolsNote(language)]
-    : currentMessages;
-
   await write(sseStatusFormat('writing'));
 
-  const secondResult = await attemptBufferedRoundWithRetry(
-    synthesisMessages,
-    (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
-    'round 2',
-    (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))
-  );
+  // When the tool-round cap was hit, DeepSeek tends to fake the tool call it
+  // wasn't allowed to make and leak DSML (seen in production even with the
+  // no-more-tools note), so it gets skipped in favor of Gemini, which doesn't
+  // have that bug. Otherwise DeepSeek synthesizes as usual and Gemini is the
+  // rescue if DeepSeek fails both attempts.
+  let secondResult = null;
+  if (!hitToolRoundCap) {
+    secondResult = await attemptBufferedRoundWithRetry(
+      currentMessages,
+      (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
+      'round 2',
+      (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))
+    );
+  }
+
+  if (secondResult === null) {
+    // Tools are passed so the tool_calls turns in history validate, but the
+    // note forbids using them; a synthesis attempt that still requests one
+    // has produced no user-visible text, so it counts as a failure.
+    secondResult = await attemptBufferedRoundWithRetry(
+      [...currentMessages, noMoreToolsNote(language)],
+      (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
+      hitToolRoundCap ? 'gemini synthesis (round cap hit)' : 'gemini synthesis (DeepSeek rescue)',
+      (result) => isIncompleteStream(result) || result.toolCalls.length > 0
+    );
+  }
 
   if (secondResult === null) {
     await write(sseFormat(fallbackMessage(language)));

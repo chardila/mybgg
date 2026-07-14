@@ -272,7 +272,7 @@ describe('runChatCompletion', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it('caps tool-calling at 2 rounds and tells the synthesis model no more lookups are available', async () => {
+  it('caps tool-calling at 2 rounds and synthesizes with Gemini (not DeepSeek) plus the no-more-lookups note', async () => {
     executeBggTool.mockResolvedValue({ result: [] });
     const mockFetch = vi
       .fn()
@@ -284,11 +284,12 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
     const text = await readAllText(response);
 
-    // Two Gemini tool rounds + one DeepSeek synthesis call — never a third Gemini round.
+    // Two Gemini tool rounds + a Gemini synthesis — DeepSeek is skipped when
+    // the cap was hit because that's the state where it leaks DSML.
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch.mock.calls[0][0]).toBe(GEMINI_URL);
     expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
-    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
+    expect(mockFetch.mock.calls[2][0]).toBe(GEMINI_URL);
     expect(executeBggTool).toHaveBeenCalledTimes(2);
     expect(extractStatuses(text)).toEqual(['thinking', 'searching', 'thinking', 'searching', 'writing']);
 
@@ -296,6 +297,8 @@ describe('runChatCompletion', () => {
     const note = synthesisBody.messages[synthesisBody.messages.length - 1];
     expect(note.role).toBe('system');
     expect(note.content).toContain('Nota interna');
+    // Tools stay declared so the tool_calls turns in history validate.
+    expect(synthesisBody.tools).toBeDefined();
   });
 
   it('executes the tool with empty args when the model sends malformed arguments JSON', async () => {
@@ -337,20 +340,54 @@ describe('runChatCompletion', () => {
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
   });
 
-  it('falls back to a friendly message when the follow-up answer leaks DSML on both attempts', async () => {
+  it('rescues with a Gemini synthesis (with the note appended) when the follow-up answer leaks DSML on both attempts', async () => {
     executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
       .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(dsmlLeakSSE())
-      .mockResolvedValueOnce(dsmlLeakSSE());
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(
+        fakeSSEResponse([
+          JSON.stringify({ choices: [{ index: 0, delta: { content: 'Encontré Wingspan.' } }] }),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        ])
+      );
     vi.stubGlobal('fetch', mockFetch);
 
     const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest(), 'es');
     const text = await readAllText(response);
 
-    expect(mockFetch).toHaveBeenCalledTimes(4);
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
+    expect(mockFetch.mock.calls[3][0]).toBe(DEEPSEEK_URL);
+    expect(mockFetch.mock.calls[4][0]).toBe(GEMINI_URL);
+    expect(text).not.toContain('DSML');
+    expect(text).toContain('data: {"token":"Encontré Wingspan."}');
+
+    const rescueBody = JSON.parse(mockFetch.mock.calls[4][1].body);
+    const note = rescueBody.messages[rescueBody.messages.length - 1];
+    expect(note.role).toBe('system');
+    expect(note.content).toContain('Nota interna');
+  });
+
+  it('falls back to a friendly message when DeepSeek leaks DSML twice and the Gemini rescue also fails twice', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(incompleteStreamSSE())
+      .mockResolvedValueOnce(incompleteStreamSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest(), 'es');
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(6);
     expect(text).not.toContain('DSML');
     expect(text).toContain('Tuve un problema');
   });
@@ -362,13 +399,36 @@ describe('runChatCompletion', () => {
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
       .mockResolvedValueOnce(toolRoundDoneSSE())
       .mockResolvedValueOnce(dsmlLeakSSE())
-      .mockResolvedValueOnce(dsmlLeakSSE());
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(incompleteStreamSSE())
+      .mockResolvedValueOnce(incompleteStreamSSE());
     vi.stubGlobal('fetch', mockFetch);
 
     const response = await runChatCompletion([{ role: 'user', content: 'what expansion should I buy?' }], env, fakeRequest(), 'en');
     const text = await readAllText(response);
 
     expect(text).toContain('I ran into a problem');
+  });
+
+  it('counts a Gemini rescue that still requests a tool call as a failure', async () => {
+    executeBggTool.mockResolvedValue({ result: [{ id: 1, name: 'Wingspan' }] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"Wingspan"}' }]))
+      .mockResolvedValueOnce(toolRoundDoneSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_x', name: 'bgg_search_game', arguments: '{"query":"z"}' }]))
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_y', name: 'bgg_search_game', arguments: '{"query":"z"}' }]));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest(), 'es');
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(6);
+    // The rescue's tool calls must never execute — only the original round's.
+    expect(executeBggTool).toHaveBeenCalledTimes(1);
+    expect(text).toContain('Tuve un problema');
   });
 
   it('retries round 1 once and uses the clean retry when the stream is cut short with no finish_reason', async () => {

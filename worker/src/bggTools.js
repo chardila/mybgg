@@ -46,18 +46,22 @@ export const BGG_TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'bgg_search_game',
-      description: 'Search BoardGameGeek for games by name. Returns id, name, and year for each match.',
+      description: 'Search BoardGameGeek for games by name. Accepts several names at once — batch every game you need to look up into a single call instead of one call per game. Returns id, name, and year for each match.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Game name to search for' },
+          queries: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Game name(s) to search for',
+          },
           type: {
             type: 'string',
             enum: ['boardgame', 'boardgameexpansion', 'all'],
             description: 'Restrict to base games, expansions, or all types. Defaults to all.',
           },
         },
-        required: ['query'],
+        required: ['queries'],
       },
     },
   },
@@ -110,7 +114,14 @@ export const BGG_TOOL_DEFINITIONS = [
   },
 ];
 
-async function searchGame({ query, type }, token) {
+// BGG throttles aggressive parallel clients, so batched searches go out in
+// small waves rather than all at once.
+const SEARCH_CONCURRENCY = 5;
+// A batched search can span a dozen games; without a cap the fuzzy matches
+// would flood the synthesis context.
+const MAX_MATCHES_PER_QUERY = 10;
+
+async function searchOneGame(query, type, token) {
   const params = { query };
   if (type && type !== 'all') params.type = type;
   const data = await bggFetch('/search', params, token);
@@ -124,6 +135,22 @@ async function searchGame({ query, type }, token) {
       year: item.yearpublished?.['@_value'] ? Number(item.yearpublished['@_value']) : null,
     };
   });
+}
+
+async function searchGame({ queries, query, type }, token) {
+  // query is the legacy single-name form; models occasionally still emit it.
+  const list = (Array.isArray(queries) && queries.length ? queries : [query]).filter(
+    (q) => typeof q === 'string' && q.trim()
+  );
+  if (!list.length) throw new Error('queries is required');
+  if (list.length === 1) return searchOneGame(list[0], type, token);
+
+  const perQuery = [];
+  for (let i = 0; i < list.length; i += SEARCH_CONCURRENCY) {
+    const chunk = list.slice(i, i + SEARCH_CONCURRENCY);
+    perQuery.push(...(await Promise.all(chunk.map((q) => searchOneGame(q, type, token)))));
+  }
+  return list.map((q, i) => ({ query: q, matches: perQuery[i].slice(0, MAX_MATCHES_PER_QUERY) }));
 }
 
 function parseGameItem(item) {
