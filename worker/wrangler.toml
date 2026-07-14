@@ -2,6 +2,9 @@ name = "mybgg-chat"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
+[observability]
+enabled = true
+
 [[kv_namespaces]]
 binding = "WIKI"
 id = "7c58b858910f4cc687381e3630e434d2"
