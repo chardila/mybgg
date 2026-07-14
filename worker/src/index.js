@@ -162,12 +162,21 @@ async function callDeepSeek(messages, apiKey, { tools } = {}) {
   return response;
 }
 
-async function callGemini(messages, apiKey, { tools } = {}) {
+// Two roles share this client with opposite needs: tool routing (the default:
+// small model, minimal effort — the decision is short and mechanical) and
+// final-answer synthesis (callers override model/reasoningEffort — writing
+// the reply requires reasoning over the full context, e.g. cross-checking
+// the whole catalog, and a minimal-effort model produces sloppy answers).
+async function callGemini(
+  messages,
+  apiKey,
+  { tools, model = 'gemini-3.1-flash-lite', reasoningEffort = 'minimal' } = {}
+) {
   const body = {
-    model: 'gemini-3.1-flash-lite',
+    model,
     messages,
     stream: true,
-    reasoning_effort: 'minimal',
+    reasoning_effort: reasoningEffort,
   };
   if (tools) body.tools = tools;
 
@@ -360,10 +369,38 @@ function toolCallsAssistantMessage(toolCalls) {
   };
 }
 
-// Told to the Gemini synthesis fallback (used when the tool-round cap was
-// hit, or when DeepSeek leaked DSML on both attempts) so it answers with
-// what was gathered instead of requesting the tools it can see in its
-// history.
+// DeepSeek's DSML leak fires when its context contains tool-call machinery
+// to imitate (tool_calls turns, role:"tool" messages). For its synthesis
+// call the whole tool exchange gets flattened into one plain-text system
+// message — nothing to imitate — with the no-more-lookups instruction baked
+// into the header.
+function flattenToolExchanges(messages, language) {
+  const kept = [];
+  const chunks = [];
+  const callsById = new Map();
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.tool_calls) {
+      for (const tc of m.tool_calls) callsById.set(tc.id, tc.function);
+      continue;
+    }
+    if (m.role === 'tool') {
+      const fn = callsById.get(m.tool_call_id);
+      const label = fn ? `${fn.name} ${fn.arguments}` : 'lookup';
+      chunks.push(`• ${label}\n${m.content}`);
+      continue;
+    }
+    kept.push(m);
+  }
+  if (!chunks.length) return messages;
+  const header =
+    language === 'en'
+      ? 'Data already fetched from BoardGameGeek for this reply. No further lookups are possible: answer using only this data and the catalog above, and if something relevant is missing, say so explicitly. Do not mention this note to the user.'
+      : 'Datos ya obtenidos de BoardGameGeek para esta respuesta. No es posible hacer más búsquedas: respondé solo con estos datos y el catálogo de arriba, y si falta algo relevante decilo explícitamente. No menciones esta nota al usuario.';
+  return [...kept, { role: 'system', content: `${header}\n\n${chunks.join('\n\n')}` }];
+}
+
+// Told to the Gemini rescue synthesis so it answers with what was gathered
+// instead of requesting the tools it can see in its (unflattened) history.
 function noMoreToolsNote(language) {
   return {
     role: 'system',
@@ -433,20 +470,17 @@ async function runChatCompletionStream(messages, env, language, write) {
 
   await write(sseStatusFormat('writing'));
 
-  // When the tool-round cap was hit, DeepSeek tends to fake the tool call it
-  // wasn't allowed to make and leak DSML (seen in production even with the
-  // no-more-tools note), so it gets skipped in favor of Gemini, which doesn't
-  // have that bug. Otherwise DeepSeek synthesizes as usual and Gemini is the
-  // rescue if DeepSeek fails both attempts.
-  let secondResult = null;
-  if (!hitToolRoundCap) {
-    secondResult = await attemptBufferedRoundWithRetry(
-      currentMessages,
-      (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
-      'round 2',
-      (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))
-    );
-  }
+  // DeepSeek always synthesizes first: it's the careful synthesizer (verified
+  // to cross-check the full catalog correctly, which Gemini flash-lite gets
+  // wrong even at medium effort). It gets the flattened, tool-syntax-free
+  // history to keep its DSML leak from firing; the Gemini net below
+  // guarantees the user still gets an answer if it leaks anyway.
+  let secondResult = await attemptBufferedRoundWithRetry(
+    flattenToolExchanges(currentMessages, language),
+    (msgs) => callDeepSeek(msgs, env.DEEPSEEK_API_KEY),
+    'round 2',
+    (result) => isIncompleteStream(result) || looksLikeLeakedToolCall(result.bufferedTokens.join(''))
+  );
 
   if (secondResult === null) {
     // Tools are passed so the tool_calls turns in history validate, but the
@@ -454,8 +488,12 @@ async function runChatCompletionStream(messages, env, language, write) {
     // has produced no user-visible text, so it counts as a failure.
     secondResult = await attemptBufferedRoundWithRetry(
       [...currentMessages, noMoreToolsNote(language)],
-      (msgs) => callGemini(msgs, env.GEMINI_API_KEY, { tools: BGG_TOOL_DEFINITIONS }),
-      hitToolRoundCap ? 'gemini synthesis (round cap hit)' : 'gemini synthesis (DeepSeek rescue)',
+      (msgs) =>
+        callGemini(msgs, env.GEMINI_API_KEY, {
+          tools: BGG_TOOL_DEFINITIONS,
+          reasoningEffort: 'medium',
+        }),
+      'gemini synthesis (DeepSeek rescue)',
       (result) => isIncompleteStream(result) || result.toolCalls.length > 0
     );
   }

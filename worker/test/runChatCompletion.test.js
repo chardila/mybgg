@@ -168,12 +168,15 @@ describe('runChatCompletion', () => {
     expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
 
     const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
-    const assistantMessage = synthesisBody.messages.find((m) => m.role === 'assistant' && m.tool_calls);
-    expect(assistantMessage.reasoning_content).toBe('');
-    // Gemini confirmed it was done on its own — the round-cap note shouldn't be added.
-    expect(synthesisBody.messages.some((m) => m.role === 'system' && m.content.includes('Nota interna'))).toBe(
-      false
-    );
+    // DeepSeek must never see tool-call machinery (that's what makes it leak
+    // DSML) — the exchange arrives flattened as one plain system message.
+    expect(synthesisBody.messages.some((m) => m.tool_calls)).toBe(false);
+    expect(synthesisBody.messages.some((m) => m.role === 'tool')).toBe(false);
+    const flattened = synthesisBody.messages[synthesisBody.messages.length - 1];
+    expect(flattened.role).toBe('system');
+    expect(flattened.content).toContain('Datos ya obtenidos');
+    expect(flattened.content).toContain('bgg_search_game');
+    expect(flattened.content).toContain('Wingspan');
   });
 
   it('replays buffered content when no tool call is requested', async () => {
@@ -229,8 +232,9 @@ describe('runChatCompletion', () => {
     expect(extractStatuses(text)).toEqual(['thinking', 'searching', 'thinking', 'writing']);
 
     const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
-    const toolMessage = synthesisBody.messages.find((m) => m.role === 'tool');
-    expect(toolMessage.content).toBe(JSON.stringify({ result: [{ id: 1, name: 'Wingspan' }] }));
+    const flattened = synthesisBody.messages[synthesisBody.messages.length - 1];
+    expect(flattened.role).toBe('system');
+    expect(flattened.content).toContain(JSON.stringify({ result: [{ id: 1, name: 'Wingspan' }] }));
     expect(synthesisBody.tools).toBeUndefined();
   });
 
@@ -267,12 +271,12 @@ describe('runChatCompletion', () => {
     await readAllText(response);
 
     const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
-    const toolMessage = synthesisBody.messages.find((m) => m.role === 'tool');
-    expect(toolMessage.content).toBe(JSON.stringify({ error: 'BGG unavailable' }));
+    const flattened = synthesisBody.messages[synthesisBody.messages.length - 1];
+    expect(flattened.content).toContain(JSON.stringify({ error: 'BGG unavailable' }));
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it('caps tool-calling at 2 rounds and synthesizes with Gemini (not DeepSeek) plus the no-more-lookups note', async () => {
+  it('caps tool-calling at 2 rounds and hands DeepSeek the flattened no-more-lookups context', async () => {
     executeBggTool.mockResolvedValue({ result: [] });
     const mockFetch = vi
       .fn()
@@ -284,21 +288,54 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
     const text = await readAllText(response);
 
-    // Two Gemini tool rounds + a Gemini synthesis — DeepSeek is skipped when
-    // the cap was hit because that's the state where it leaks DSML.
+    // Two Gemini tool rounds + one DeepSeek synthesis call — never a third
+    // Gemini tool round, and DeepSeek stays the synthesizer (it does the
+    // careful catalog cross-checks; Gemini only rescues if it fails twice).
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch.mock.calls[0][0]).toBe(GEMINI_URL);
     expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
-    expect(mockFetch.mock.calls[2][0]).toBe(GEMINI_URL);
+    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
     expect(executeBggTool).toHaveBeenCalledTimes(2);
     expect(extractStatuses(text)).toEqual(['thinking', 'searching', 'thinking', 'searching', 'writing']);
 
     const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
-    const note = synthesisBody.messages[synthesisBody.messages.length - 1];
+    const flattened = synthesisBody.messages[synthesisBody.messages.length - 1];
+    expect(flattened.role).toBe('system');
+    expect(flattened.content).toContain('No es posible hacer más búsquedas');
+    expect(synthesisBody.messages.some((m) => m.tool_calls || m.role === 'tool')).toBe(false);
+  });
+
+  it('rescues a cap-hit DeepSeek double-leak with a Gemini synthesis at answer-writing effort', async () => {
+    executeBggTool.mockResolvedValue({ result: [] });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"x"}' }]))
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_2', name: 'bgg_search_game', arguments: '{"query":"y"}' }]))
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(dsmlLeakSSE())
+      .mockResolvedValueOnce(noToolCallSSE());
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
+    const text = await readAllText(response);
+
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
+    expect(mockFetch.mock.calls[3][0]).toBe(DEEPSEEK_URL);
+    expect(mockFetch.mock.calls[4][0]).toBe(GEMINI_URL);
+    expect(text).not.toContain('DSML');
+    expect(text).toContain('data: {"token":"Hola"}');
+
+    const rescueBody = JSON.parse(mockFetch.mock.calls[4][1].body);
+    // Tools stay declared so the tool_calls turns in history validate.
+    expect(rescueBody.tools).toBeDefined();
+    // The rescue writes the final answer: it needs answer-writing effort,
+    // not the minimal tool-routing config.
+    expect(rescueBody.model).toBe('gemini-3.1-flash-lite');
+    expect(rescueBody.reasoning_effort).toBe('medium');
+    const note = rescueBody.messages[rescueBody.messages.length - 1];
     expect(note.role).toBe('system');
     expect(note.content).toContain('Nota interna');
-    // Tools stay declared so the tool_calls turns in history validate.
-    expect(synthesisBody.tools).toBeDefined();
   });
 
   it('executes the tool with empty args when the model sends malformed arguments JSON', async () => {
@@ -508,8 +545,8 @@ describe('runChatCompletion', () => {
     expect(executeBggTool).toHaveBeenCalledWith('bgg_search_game', { query: 'Wingspan' }, 'bgg-token');
     expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
     const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
-    const toolMessage = synthesisBody.messages.find((m) => m.role === 'tool');
-    expect(toolMessage.content).toBe(JSON.stringify({ result: [{ id: 1, name: 'Wingspan' }] }));
+    const flattened = synthesisBody.messages[synthesisBody.messages.length - 1];
+    expect(flattened.content).toContain(JSON.stringify({ result: [{ id: 1, name: 'Wingspan' }] }));
     expect(text).toContain('data: {"token":"Encontré Wingspan."}');
   });
 
@@ -602,8 +639,10 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: '¿qué expansión compro?' }], env, fakeRequest());
     await readAllText(response);
 
-    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
-    const assistantMessage = synthesisBody.messages.find((m) => m.role === 'assistant' && m.tool_calls);
+    // The synthesis body no longer carries tool_calls (flattened for
+    // DeepSeek), so the guard applies to round 2's Gemini history instead.
+    const round2Body = JSON.parse(mockFetch.mock.calls[1][1].body);
+    const assistantMessage = round2Body.messages.find((m) => m.role === 'assistant' && m.tool_calls);
     expect('extra_content' in assistantMessage.tool_calls[0]).toBe(false);
   });
 
