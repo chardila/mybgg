@@ -265,6 +265,7 @@ function initializeUI() {
   });
 
   initializeMobileFilters();
+  initializeChatCta();
 }
 
 function initializeMobileFilters() {
@@ -287,6 +288,18 @@ function initializeMobileFilters() {
   }
 
   overlay.addEventListener('click', toggleMenu);
+}
+
+function initializeChatCta() {
+  const button = document.getElementById('chat-cta');
+  if (!button) return;
+
+  button.addEventListener('click', () => {
+    const text = document.getElementById('search-input')?.value.trim() || '';
+    window.location.href = text
+      ? `chat.html?q=${encodeURIComponent(text)}`
+      : 'chat.html';
+  });
 }
 
 

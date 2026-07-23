@@ -193,6 +193,29 @@ body {
     height: calc(1em + 1em + 2px);
 }
 
+.chat-cta {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #b71c1c;
+    color: white;
+    border: none;
+    border-radius: 20px;
+    padding: 0.5em 1em;
+    font-size: 0.9em;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    margin-right: 1em;
+}
+
+.chat-cta:hover {
+    background: #9a1717;
+}
+
+.chat-cta .material-symbols-rounded {
+    color: white;
+}
 
 .stats {
     display: inline-block;
