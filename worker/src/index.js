@@ -453,6 +453,7 @@ async function runChatCompletionStream(messages, env, language, write) {
 
     toolsWereCalled = true;
     const toolCalls = result.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+    console.log(`cap-tuning: round ${round} tools: ${toolCalls.map((tc) => tc.function.name).join(', ')}`);
     if (result.toolCalls.length > toolCalls.length) {
       console.warn(
         `cap-tuning: tool round ${round} requested ${result.toolCalls.length} tool calls, dropped ${result.toolCalls.length - toolCalls.length} over MAX_TOOL_CALLS_PER_ROUND=${MAX_TOOL_CALLS_PER_ROUND}`
