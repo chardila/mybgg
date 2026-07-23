@@ -86,6 +86,29 @@ export const BGG_TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'bgg_lookup_games',
+      description: 'One-shot lookup for games NOT in the user catalog: resolves each name to its BGG id and fetches rating, weight, players, mechanics, categories, and expansions, all in a single tool round. Use this instead of bgg_search_game + bgg_get_game_details when recommending or comparing games the user doesn\'t own — it saves a full round. Picks the best name match automatically, so it is not a fit when you need to browse multiple candidate editions/reprints for the same title.',
+      parameters: {
+        type: 'object',
+        properties: {
+          names: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Game name(s) to resolve and fetch details for',
+          },
+          type: {
+            type: 'string',
+            enum: ['boardgame', 'boardgameexpansion', 'all'],
+            description: 'Restrict matching to base games, expansions, or all types. Defaults to boardgame.',
+          },
+        },
+        required: ['names'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'bgg_search_forum',
       description: "Search a game's BGG forums for threads whose subject matches a term (rules questions, fan variants, unofficial solo modes, etc).",
       parameters: {
@@ -184,6 +207,41 @@ async function getGameDetails({ bgg_ids, bgg_id }, token) {
   return items.map(parseGameItem);
 }
 
+function pickBestMatch(matches, query) {
+  if (!matches.length) return null;
+  const qLower = query.trim().toLowerCase();
+  return matches.find((m) => m.name?.toLowerCase() === qLower) ?? matches[0];
+}
+
+async function lookupGames({ names, type }, token) {
+  const list = (Array.isArray(names) ? names : []).filter(
+    (n) => typeof n === 'string' && n.trim()
+  );
+  if (!list.length) throw new Error('names is required');
+
+  const searchType = type ?? 'boardgame';
+  const perQuery = [];
+  for (let i = 0; i < list.length; i += SEARCH_CONCURRENCY) {
+    const chunk = list.slice(i, i + SEARCH_CONCURRENCY);
+    perQuery.push(...(await Promise.all(chunk.map((q) => searchOneGame(q, searchType, token)))));
+  }
+
+  const resolved = list.map((query, i) => ({ query, match: pickBestMatch(perQuery[i], query) }));
+  const idsToFetch = resolved.filter((r) => r.match).map((r) => r.match.id);
+
+  const detailsById = new Map();
+  if (idsToFetch.length) {
+    for (const item of await getGameDetails({ bgg_ids: idsToFetch }, token)) {
+      detailsById.set(item.id, item);
+    }
+  }
+
+  return resolved.map(({ query, match }) => {
+    if (!match) return { query, found: false };
+    return { query, found: true, ...(detailsById.get(match.id) ?? { id: match.id, name: match.name, year: match.year }) };
+  });
+}
+
 async function searchForum({ bgg_id, query }, token) {
   const listData = await bggFetch('/forumlist', { id: bgg_id, type: 'thing' }, token);
   const forums = asArray(listData.forumlist?.forum);
@@ -244,6 +302,8 @@ export async function executeBggTool(name, args, token) {
         return { result: await searchGame(args, token) };
       case 'bgg_get_game_details':
         return { result: await getGameDetails(args, token) };
+      case 'bgg_lookup_games':
+        return { result: await lookupGames(args, token) };
       case 'bgg_search_forum':
         return { result: await searchForum(args, token) };
       case 'bgg_get_thread':

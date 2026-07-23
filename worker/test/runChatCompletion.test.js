@@ -238,7 +238,7 @@ describe('runChatCompletion', () => {
     expect(synthesisBody.tools).toBeUndefined();
   });
 
-  it('executes at most 3 tool calls per round', async () => {
+  it('executes at most 4 tool calls per round', async () => {
     executeBggTool.mockResolvedValue({ result: [] });
     const fiveToolCalls = Array.from({ length: 5 }, (_, i) => ({
       id: `call_${i}`,
@@ -255,7 +255,7 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
     await readAllText(response);
 
-    expect(executeBggTool).toHaveBeenCalledTimes(3);
+    expect(executeBggTool).toHaveBeenCalledTimes(4);
   });
 
   it('passes a tool execution error through as the tool message content without aborting', async () => {
@@ -276,29 +276,39 @@ describe('runChatCompletion', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it('caps tool-calling at 2 rounds and hands DeepSeek the flattened no-more-lookups context', async () => {
+  it('caps tool-calling at 3 rounds and hands DeepSeek the flattened no-more-lookups context', async () => {
     executeBggTool.mockResolvedValue({ result: [] });
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"x"}' }]))
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_2', name: 'bgg_search_game', arguments: '{"query":"y"}' }]))
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_3', name: 'bgg_search_game', arguments: '{"query":"z"}' }]))
       .mockResolvedValueOnce(noToolCallSSE());
     vi.stubGlobal('fetch', mockFetch);
 
     const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
     const text = await readAllText(response);
 
-    // Two Gemini tool rounds + one DeepSeek synthesis call — never a third
+    // Three Gemini tool rounds + one DeepSeek synthesis call — never a fourth
     // Gemini tool round, and DeepSeek stays the synthesizer (it does the
     // careful catalog cross-checks; Gemini only rescues if it fails twice).
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(mockFetch.mock.calls[0][0]).toBe(GEMINI_URL);
     expect(mockFetch.mock.calls[1][0]).toBe(GEMINI_URL);
-    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
-    expect(executeBggTool).toHaveBeenCalledTimes(2);
-    expect(extractStatuses(text)).toEqual(['thinking', 'searching', 'thinking', 'searching', 'writing']);
+    expect(mockFetch.mock.calls[2][0]).toBe(GEMINI_URL);
+    expect(mockFetch.mock.calls[3][0]).toBe(DEEPSEEK_URL);
+    expect(executeBggTool).toHaveBeenCalledTimes(3);
+    expect(extractStatuses(text)).toEqual([
+      'thinking',
+      'searching',
+      'thinking',
+      'searching',
+      'thinking',
+      'searching',
+      'writing',
+    ]);
 
-    const synthesisBody = JSON.parse(mockFetch.mock.calls[2][1].body);
+    const synthesisBody = JSON.parse(mockFetch.mock.calls[3][1].body);
     const flattened = synthesisBody.messages[synthesisBody.messages.length - 1];
     expect(flattened.role).toBe('system');
     expect(flattened.content).toContain('No es posible hacer más búsquedas');
@@ -311,6 +321,7 @@ describe('runChatCompletion', () => {
       .fn()
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_1', name: 'bgg_search_game', arguments: '{"query":"x"}' }]))
       .mockResolvedValueOnce(toolCallSSE([{ id: 'call_2', name: 'bgg_search_game', arguments: '{"query":"y"}' }]))
+      .mockResolvedValueOnce(toolCallSSE([{ id: 'call_3', name: 'bgg_search_game', arguments: '{"query":"z"}' }]))
       .mockResolvedValueOnce(dsmlLeakSSE())
       .mockResolvedValueOnce(dsmlLeakSSE())
       .mockResolvedValueOnce(noToolCallSSE());
@@ -319,14 +330,14 @@ describe('runChatCompletion', () => {
     const response = await runChatCompletion([{ role: 'user', content: 'hola' }], env, fakeRequest());
     const text = await readAllText(response);
 
-    expect(mockFetch).toHaveBeenCalledTimes(5);
-    expect(mockFetch.mock.calls[2][0]).toBe(DEEPSEEK_URL);
+    expect(mockFetch).toHaveBeenCalledTimes(6);
     expect(mockFetch.mock.calls[3][0]).toBe(DEEPSEEK_URL);
-    expect(mockFetch.mock.calls[4][0]).toBe(GEMINI_URL);
+    expect(mockFetch.mock.calls[4][0]).toBe(DEEPSEEK_URL);
+    expect(mockFetch.mock.calls[5][0]).toBe(GEMINI_URL);
     expect(text).not.toContain('DSML');
     expect(text).toContain('data: {"token":"Hola"}');
 
-    const rescueBody = JSON.parse(mockFetch.mock.calls[4][1].body);
+    const rescueBody = JSON.parse(mockFetch.mock.calls[5][1].body);
     // Tools stay declared so the tool_calls turns in history validate.
     expect(rescueBody.tools).toBeDefined();
     // The rescue writes the final answer: it needs answer-writing effort,

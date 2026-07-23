@@ -6,11 +6,12 @@ function fakeXmlResponse(xml, { ok = true, status = 200 } = {}) {
 }
 
 describe('BGG_TOOL_DEFINITIONS', () => {
-  it('declares all 4 tools by name', () => {
+  it('declares all 5 tools by name', () => {
     const names = BGG_TOOL_DEFINITIONS.map((t) => t.function.name);
     expect(names).toEqual([
       'bgg_search_game',
       'bgg_get_game_details',
+      'bgg_lookup_games',
       'bgg_search_forum',
       'bgg_get_thread',
     ]);
@@ -206,6 +207,133 @@ describe('executeBggTool: bgg_get_game_details', () => {
     const { result, error } = await executeBggTool('bgg_get_game_details', {}, 'tok123');
     expect(result).toBeUndefined();
     expect(error).toBe('bgg_ids is required');
+  });
+});
+
+describe('executeBggTool: bgg_lookup_games', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('resolves a name to its id and returns details in a single call', async () => {
+    const searchXml = `<?xml version="1.0"?>
+      <items total="1" termsofuse="x">
+        <item type="boardgame" id="266192">
+          <name type="primary" value="Wingspan"/>
+          <yearpublished value="2019"/>
+        </item>
+      </items>`;
+    const thingXml = `<?xml version="1.0"?>
+      <items termsofuse="x">
+        <item type="boardgame" id="266192">
+          <name type="primary" sortindex="1" value="Wingspan"/>
+          <yearpublished value="2019"/>
+          <minplayers value="1"/>
+          <maxplayers value="5"/>
+          <playingtime value="70"/>
+          <statistics><ratings><average value="8.1"/><averageweight value="2.4"/></ratings></statistics>
+        </item>
+      </items>`;
+    const mockFetch = vi.fn((url) =>
+      Promise.resolve(fakeXmlResponse(url.includes('/search') ? searchXml : thingXml))
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { result, error } = await executeBggTool('bgg_lookup_games', { names: ['Wingspan'] }, 'tok123');
+
+    expect(error).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([{
+      query: 'Wingspan',
+      found: true,
+      id: 266192,
+      name: 'Wingspan',
+      year: 2019,
+      min_players: 1,
+      max_players: 5,
+      playing_time: 70,
+      rating: 8.1,
+      weight: 2.4,
+      categories: [],
+      mechanics: [],
+      expansions: [],
+    }]);
+  });
+
+  it('defaults the search to base games only', async () => {
+    const xml = `<?xml version="1.0"?><items total="0" termsofuse="x"></items>`;
+    const mockFetch = vi.fn().mockResolvedValue(fakeXmlResponse(xml));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await executeBggTool('bgg_lookup_games', { names: ['zzz'] }, 'tok123');
+
+    expect(mockFetch.mock.calls[0][0]).toContain('type=boardgame');
+  });
+
+  it('batches multiple names into one bgg_get_game_details request', async () => {
+    const xmlFor = (id, name) => `<?xml version="1.0"?>
+      <items total="1" termsofuse="x">
+        <item type="boardgame" id="${id}"><name type="primary" value="${name}"/><yearpublished value="2019"/></item>
+      </items>`;
+    const thingXml = `<?xml version="1.0"?>
+      <items termsofuse="x">
+        <item type="boardgame" id="266192"><name type="primary" sortindex="1" value="Wingspan"/></item>
+        <item type="boardgame" id="167791"><name type="primary" sortindex="1" value="Terraforming Mars"/></item>
+      </items>`;
+    const mockFetch = vi.fn((url) => {
+      if (url.includes('/thing')) return Promise.resolve(fakeXmlResponse(thingXml));
+      if (url.includes('Terraforming')) return Promise.resolve(fakeXmlResponse(xmlFor(167791, 'Terraforming Mars')));
+      return Promise.resolve(fakeXmlResponse(xmlFor(266192, 'Wingspan')));
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { result, error } = await executeBggTool(
+      'bgg_lookup_games',
+      { names: ['Wingspan', 'Terraforming Mars'] },
+      'tok123'
+    );
+
+    expect(error).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    const thingCall = mockFetch.mock.calls.find(([url]) => url.includes('/thing'));
+    expect(thingCall[0]).toContain('id=266192%2C167791');
+    expect(result.map((r) => r.name)).toEqual(['Wingspan', 'Terraforming Mars']);
+  });
+
+  it('prefers an exact case-insensitive name match over the first fuzzy result', async () => {
+    const searchXml = `<?xml version="1.0"?>
+      <items total="2" termsofuse="x">
+        <item type="boardgame" id="1"><name type="primary" value="Catan (Anniversary Edition)"/><yearpublished value="2015"/></item>
+        <item type="boardgame" id="13"><name type="primary" value="Catan"/><yearpublished value="1995"/></item>
+      </items>`;
+    const thingXml = `<?xml version="1.0"?>
+      <items termsofuse="x">
+        <item type="boardgame" id="13"><name type="primary" sortindex="1" value="Catan"/><yearpublished value="1995"/></item>
+      </items>`;
+    const mockFetch = vi.fn((url) =>
+      Promise.resolve(fakeXmlResponse(url.includes('/search') ? searchXml : thingXml))
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { result } = await executeBggTool('bgg_lookup_games', { names: ['Catan'] }, 'tok123');
+
+    expect(result).toEqual([expect.objectContaining({ query: 'Catan', id: 13, name: 'Catan', year: 1995 })]);
+  });
+
+  it('reports found: false for a name with no search matches, without calling bgg_get_game_details', async () => {
+    const xml = `<?xml version="1.0"?><items total="0" termsofuse="x"></items>`;
+    const mockFetch = vi.fn().mockResolvedValue(fakeXmlResponse(xml));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { result, error } = await executeBggTool('bgg_lookup_games', { names: ['zzz-nonexistent'] }, 'tok123');
+
+    expect(error).toBeUndefined();
+    expect(result).toEqual([{ query: 'zzz-nonexistent', found: false }]);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an error when called without any name', async () => {
+    const { result, error } = await executeBggTool('bgg_lookup_games', {}, 'tok123');
+    expect(result).toBeUndefined();
+    expect(error).toBe('names is required');
   });
 });
 
