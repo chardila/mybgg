@@ -613,8 +613,26 @@
 
   // ── Init ───────────────────────────────────────────────────────────────────
   (async () => {
-    const count = await loadGames();
+    await loadGames();
+    const params = new URLSearchParams(location.search);
+    const bggId = params.get('bgg_id');
+    const name = params.get('name');
+    const q = params.get('q');
+
+    if (bggId) {
+      const game = allGames.find((g) => !g.base_game_slug && String(g.bgg_id) === bggId);
+      if (game) {
+        document.getElementById('game-select').value = game.slug;
+        startDeepDive(game.slug, gameLabel(game), [], []);
+        return;
+      }
+      triggerOpeningMessage();
+      if (name) sendMessage(currentLanguage === 'en' ? `Tell me about ${name}` : `Cuéntame sobre ${name}`);
+      return;
+    }
+
     triggerOpeningMessage();
+    if (q) sendMessage(q);
   })();
 </script>
 
