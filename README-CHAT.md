@@ -1,7 +1,7 @@
 # README-CHAT — Chat Feature & Content Pipeline
 
 Technical reference for the **Chat** feature of mybgg and the full pipeline that feeds
-it (game import, wiki generation, per-section refresh), as of 2026-07-13. Intended as a
+it (game import, wiki generation, per-section refresh), as of 2026-07-23. Intended as a
 guide to understand what exists today, and as a rebuild guide if any part of it needs
 to be stood up from scratch (new Cloudflare Worker, new API keys, new wiki repo, etc).
 
@@ -176,7 +176,7 @@ max 20 requests per IP (`CF-Connecting-IP`), counter stored in the same `WIKI` K
   (e.g. "Root (Fan Edition) + Underworld").
 
 **Tool-calling + synthesis loop (`runChatCompletionStream`)**:
-1. Up to `MAX_TOOL_ROUNDS = 2` rounds against **Gemini** with BGG tools available
+1. Up to `MAX_TOOL_ROUNDS = 3` rounds against **Gemini** with BGG tools available
    (`BGG_TOOL_DEFINITIONS`). Each round emits an SSE `thinking` status. Both the
    `discovery` and `deep_dive`/`teach` system prompts state this budget explicitly
    (interpolated from the constants, so the prompt text can't drift from the actual
@@ -188,18 +188,31 @@ max 20 requests per IP (`CF-Connecting-IP`), counter stored in the same `WIKI` K
    entries and the deep-dive Overview frontmatter also expose the game's own `bgg_id` so
    the model can call BGG tools directly instead of burning a round on
    `bgg_search_game` first.
+   - **`bgg_lookup_games`** (added 2026-07-23) is a fifth tool that collapses
+     `bgg_search_game` + `bgg_get_game_details` into one call: it resolves each given
+     name to a BGG id (picking an exact case-insensitive name match over the first
+     fuzzy result) and fetches that game's details, all server-side in a single tool
+     round. The `discovery` prompt directs the model to use it specifically for games
+     *not* in the catalog (what to buy, what's similar to something owned) instead of
+     the two-step `bgg_search_game`→`bgg_get_game_details` pair — that pattern was the
+     one most likely to exhaust `MAX_TOOL_ROUNDS` (name resolution and detail-fetching
+     are each a full round on their own), and verified in production
+     (`(log) cap-tuning: round 1 tools: bgg_lookup_games`) to actually get picked for it.
    - If Gemini doesn't request a tool in round 1, that answer streams straight to the
      user (never touching DeepSeek) — the fast, cheap path for simple questions.
-   - If it does request tools, they're executed (max `MAX_TOOL_CALLS_PER_ROUND = 3` per
+   - If it does request tools, they're executed (max `MAX_TOOL_CALLS_PER_ROUND = 4` per
      round, in parallel) via `executeBggTool()`, a more specific status is emitted
      (`searching` / `details` / `forum` depending on the tool), and the results are
-     appended to the message history as `role: "tool"` turns. If Gemini requested more
-     than `MAX_TOOL_CALLS_PER_ROUND` calls, the extras are dropped and a
-     `console.warn('cap-tuning: ...')` line records it — same for hitting the round cap
-     below — so Workers Logs (§2.6) can show whether real traffic ever needs the caps
-     raised before actually raising them.
-   - If round 2 is reached and Gemini still wants more tools, the loop is cut off
-     (`hitToolRoundCap`) — synthesis proceeds without further lookups.
+     appended to the message history as `role: "tool"` turns. Every round also logs
+     `console.log('cap-tuning: round N tools: ...')` naming the tools called that round
+     (added 2026-07-23, so tool choice can be audited without waiting for a cap-hit
+     warning). If Gemini requested more than `MAX_TOOL_CALLS_PER_ROUND` calls, the
+     extras are dropped and a `console.warn('cap-tuning: ...')` line records it — same
+     for hitting the round cap below — so Workers Logs (§2.6) can show whether real
+     traffic ever needs the caps raised before actually raising them.
+   - If the final round (`MAX_TOOL_ROUNDS`) is reached and Gemini still wants more
+     tools, the loop is cut off (`hitToolRoundCap`) — synthesis proceeds without
+     further lookups.
 2. **Final synthesis**, with a `writing` status, using the full accumulated history
    (system + catalog/wiki + tool results + user message):
    - **DeepSeek synthesizes first, unconditionally** (whether or not the tool-round cap
@@ -285,12 +298,19 @@ max 20 requests per IP (`CF-Connecting-IP`), counter stored in the same `WIKI` K
   caller at a different model name.
 - The `bgg.cardila.com/api/*` → Worker route lives outside this repo (Cloudflare
   dashboard), so there's no single versioned place documenting it — see §5.6.
+- **`wrangler tail --search "<term>"` is unreliable for `console.log`/`console.warn`
+  output**: observed in production (2026-07-23) missing lines that plainly contained
+  the search term, across several repeated attempts, while an identical unfiltered
+  `wrangler tail <worker> --format pretty` session against the same live traffic
+  captured them immediately. Prefer tailing without `--search` and filtering visually
+  or by piping/grepping the output file instead of trusting the flag.
 
 **Observability**: `worker/wrangler.toml` has `[observability] enabled = true` — the
-Worker's `console.error`/`console.warn` output (DSML leak retries, cut streams,
-cap-tuning lines, unhandled exceptions) persists in Cloudflare's Workers Logs for about
-3 days, so a bad chat reply can be diagnosed after the fact instead of only via a live
-`wrangler tail` session.
+Worker's `console.log`/`console.error`/`console.warn` output (per-round tool names,
+DSML leak retries, cut streams, cap-tuning lines, unhandled exceptions) persists in
+Cloudflare's Workers Logs for about 3 days, so a bad chat reply can be diagnosed after
+the fact instead of only via a live `wrangler tail` session (subject to the `--search`
+caveat above).
 
 ### 2.7 Endpoints
 
@@ -314,7 +334,7 @@ All CORS-scoped to `https://bgg.cardila.com` and `http://localhost*`
 |---|---|
 | `runChatCompletion.test.js` | Full `handleChat` flow / end-to-end SSE streaming, including the DeepSeek-first/Gemini-rescue synthesis order and `flattenToolExchanges()`. |
 | `deepseekStream.test.js` | DeepSeek SSE stream parsing (`parseDeepSeekStream`). |
-| `bggTools.test.js` | All 4 BGG tools (`bgg_search_game`, `bgg_get_game_details`, `bgg_search_forum`, `bgg_get_thread`), including `[quote]`/`[q]` stripping, post truncation, and the batched `queries`/`bgg_ids` array forms (plus the legacy single-value forms). |
+| `bggTools.test.js` | All 5 BGG tools (`bgg_search_game`, `bgg_get_game_details`, `bgg_lookup_games`, `bgg_search_forum`, `bgg_get_thread`), including `[quote]`/`[q]` stripping, post truncation, the batched `queries`/`bgg_ids` array forms (plus the legacy single-value forms), and `bgg_lookup_games`'s name-resolution + exact-match preference. |
 | `deepDiveContext.test.js` | Base game + expansions context assembly. |
 | `teachMode.test.js` | End-to-end teach mode. |
 | `minimizeGame.test.js` | Catalog minimization for discovery mode, including passing `bgg_id` through when present. |
@@ -904,8 +924,8 @@ browser.
 
 | Constant | Value | Location |
 |---|---|---|
-| `MAX_TOOL_CALLS_PER_ROUND` | 3 | `worker/src/index.js` |
-| `MAX_TOOL_ROUNDS` | 2 | `worker/src/index.js` |
+| `MAX_TOOL_CALLS_PER_ROUND` | 4 | `worker/src/index.js` |
+| `MAX_TOOL_ROUNDS` | 3 | `worker/src/index.js` |
 | Chat history sent to the LLM | last 20 messages | `handleChat()` |
 | Rate limit | 20 req/IP/60s | `worker/src/rateLimiter.js` |
 | Expansions allowed per request | max 10 | `handleChat()` |
