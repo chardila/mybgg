@@ -1573,6 +1573,13 @@ function renderGameCard(game) {
     bggLink.href = `https://boardgamegeek.com/boardgame/${game.id}`;
   }
 
+  // Set chat link
+  const chatLink = clone.querySelector('.chat-link');
+  if (chatLink && game.id) {
+    const params = new URLSearchParams({ bgg_id: game.id, name: game.name });
+    chatLink.href = `chat.html?${params.toString()}`;
+  }
+
   return clone;
 }
 
