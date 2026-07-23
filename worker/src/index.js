@@ -3,7 +3,7 @@ import { checkRateLimit } from './rateLimiter.js';
 import { BGG_TOOL_DEFINITIONS, executeBggTool } from './bggTools.js';
 
 const MAX_TOOL_CALLS_PER_ROUND = 4;
-const MAX_TOOL_ROUNDS = 2;
+const MAX_TOOL_ROUNDS = 3;
 
 function getCorsHeaders(request) {
   const origin = request.headers.get('Origin') || '';
