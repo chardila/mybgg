@@ -52,7 +52,7 @@ jobs:
         with:
           repository: chardila/mybgg-wiki
           path: wiki
-          token: ${{ secrets.WIKI_GITHUB_TOKEN }}
+          ssh-key: ${{ secrets.WIKI_DEPLOY_KEY }}
 
       - name: Setup Python
         uses: actions/setup-python@v6

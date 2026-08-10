@@ -21,7 +21,9 @@ through GitHub Actions workflows defined **in this repo** (`.github/workflows/`)
 
 1. Check out `mybgg` (code) at the workflow's default path.
 2. Check out `mybgg-wiki` (content) into a `wiki/` subdirectory, authenticating with
-   the `WIKI_GITHUB_TOKEN` secret (a PAT with `repo` scope on `mybgg-wiki`).
+   the `WIKI_DEPLOY_KEY` secret (an SSH deploy key with write access on `mybgg-wiki`,
+   set up 2026-08-10 after the previous `WIKI_GITHUB_TOKEN` PAT expired — deploy keys
+   don't expire, so this shouldn't need rotation).
 3. Run a Python compiler script from `mybgg`, passing `--wiki_path wiki`.
 4. The compiler script itself `git commit` + `git push`es directly into the
    `mybgg-wiki` checkout (see `wiki_writer.py`, §3.5) — the workflow doesn't do a
@@ -636,7 +638,7 @@ Run hourly by `.github/workflows/index.yml` (§5.1) and manually for local devel
 | `models.py` | `BoardGame` — normalizes raw BGG collection/thing data into the fields the indexers consume (`calc_num_players`, `calc_playing_time`, `calc_min_age`, `calc_rank`, `calc_usersrated`, `calc_numowned`, `calc_rating`, `calc_weight`, `todict()`). |
 | `sqlite_indexer.py` | `SqliteIndexer` — builds the actual `gamecache.sqlite` schema and rows (current indexing backend). |
 | `indexer.py` | `Indexer` — an older/alternate Algolia-based indexer (search facets, image fetching, description truncation); kept for reference/compat, not the primary path invoked by `download_and_index.py` today (which uses `sqlite_indexer.py`). |
-| `github_integration.py` | `GitHubAuth` (device-flow OAuth for interactive local runs) + `GitHubReleaseManager` (`upload_snapshot`, create-or-update a GitHub Release and (re)upload the `gamecache.sqlite.gz` asset) — this is the "no human to log in" problem the root `README.md` explains, solved via a PAT (`GAMECACHE_GITHUB_TOKEN`) in CI instead of the device flow. |
+| `github_integration.py` | `GitHubAuth` (device-flow OAuth for interactive local runs) + `GitHubReleaseManager` (`upload_snapshot`, create-or-update a GitHub Release and (re)upload the `gamecache.sqlite.gz` asset) — this is the "no human to log in" problem the root `README.md` explains, solved in CI via the automatic `GITHUB_TOKEN` (an explicit `GAMECACHE_GITHUB_TOKEN`/`MYBGG_GITHUB_TOKEN` env var still overrides it if set, for back-compat). |
 | `http_client.py` | Shared HTTP helpers: `make_http_request`/`make_http_post`, an `HttpSession` wrapper, and `CachedHttpClient` (disk-cached GETs, used by `--cache_bgg`). |
 | `config.py` | `parse_config_file` / `create_nested_config` — reads `config.ini` (flat key=value) into the nested dict shape the rest of the module expects. |
 
@@ -656,15 +658,16 @@ Run hourly by `.github/workflows/index.yml` (§5.1) and manually for local devel
 
 | Workflow | Trigger | What it runs |
 |---|---|---|
-| `index.yml` | Hourly cron (`0 * * * *`) + manual | `scripts/download_and_index.py --debug` — refreshes `gamecache.sqlite.gz` from the user's live BGG collection and re-uploads it as a GitHub Release asset. Self-disables (skips with a notice) if `GAMECACHE_GITHUB_TOKEN` (or the deprecated `MYBGG_GITHUB_TOKEN` fallback) isn't set as a secret. |
-| `import-game.yml` | Manual (`workflow_dispatch`, inputs: `bgg_id`, `pdf_url`, `edition`, `name`, `base_game_bgg_id`, `status`) | Checks out both `mybgg` and `mybgg-wiki` (via `WIKI_GITHUB_TOKEN`), then runs `scripts/compiler/add_game.py` — imports **one** game into the wiki. |
+| `index.yml` | Hourly cron (`0 * * * *`) + manual | `scripts/download_and_index.py --debug` — refreshes `gamecache.sqlite.gz` from the user's live BGG collection and re-uploads it as a GitHub Release asset, using the automatic `GITHUB_TOKEN` (job declares `permissions: contents: write`) — no PAT to create or rotate. Switched from a manually-rotated `GAMECACHE_GITHUB_TOKEN` PAT 2026-08-10 after it expired. |
+| `import-game.yml` | Manual (`workflow_dispatch`, inputs: `bgg_id`, `pdf_url`, `edition`, `name`, `base_game_bgg_id`, `status`) | Checks out both `mybgg` and `mybgg-wiki` (via the `WIKI_DEPLOY_KEY` SSH deploy key), then runs `scripts/compiler/add_game.py` — imports **one** game into the wiki. |
 | `bulk-import-games.yml` | Manual (`workflow_dispatch`, inputs: `csv_path` default `coleccion_cardila_bgg_rules_full.csv`, `status`, `limit`, `only`) | Same two-repo checkout, then `scripts/compiler/bulk_import.py` — imports every not-yet-imported row from the CSV, with a Markdown summary written to the Actions run summary. |
 | `pages.yml` | Push to `master` + manual | Deploys the static site (this whole repo, path `.`) to GitHub Pages. **Does not touch the Cloudflare Worker** — see the deployment note in §6.5. |
 | `keepalive.yml` | Cron every ~2 months (Jan/Mar/May/Jul/Sep/Nov) + manual | An empty commit, purely to keep the repository "active" for GitHub's scheduled-workflow-disabling policy (GitHub disables cron workflows on repos with no activity for 60 days). Unrelated to chat/content, listed here for completeness. |
 
 Secrets referenced across these workflows: `GAMECACHE_BGG_TOKEN` (BGG API auth),
-`GAMECACHE_GITHUB_TOKEN` / deprecated `MYBGG_GITHUB_TOKEN` (release upload permissions
-on *this* repo), `WIKI_GITHUB_TOKEN` (checkout+push permissions on `mybgg-wiki`),
+the automatic `GITHUB_TOKEN` (release upload permissions on *this* repo, via
+`permissions: contents: write` — no stored secret needed), `WIKI_DEPLOY_KEY`
+(SSH deploy key, checkout+push permissions on `mybgg-wiki`),
 `DEEPSEEK_API_KEY`, `GEMINI_API_KEY` (compiler LLM calls — same two providers as the
 chat Worker, but called directly from Python here, not proxied through the Worker).
 
@@ -820,8 +823,9 @@ has run.
 - A BGG API token (`GAMECACHE_BGG_TOKEN`) — generate manually via
   `scripts/setup_bgg_token.py` (see root `README.md`; the old auto-generator Worker is
   permanently broken and unrelated to this repo).
-- The separate `mybgg-wiki` repository (or a fresh empty repo to serve as one), plus a
-  GitHub PAT with `repo` scope on it (`WIKI_GITHUB_TOKEN`), to run the import workflows.
+- The separate `mybgg-wiki` repository (or a fresh empty repo to serve as one), plus an
+  SSH deploy key with write access on it, stored as `WIKI_DEPLOY_KEY` in this repo's
+  Actions secrets, to run the import workflows. (Deploy keys don't expire, unlike a PAT.)
 
 ### 6.2 Create the KV namespace
 
@@ -894,8 +898,11 @@ origin changes.
 
 ### 6.7 Set up the content pipeline
 
-1. Create/point at a `mybgg-wiki` repository, add a PAT with `repo` scope as
-   `WIKI_GITHUB_TOKEN` in this repo's Actions secrets.
+1. Create/point at a `mybgg-wiki` repository. Generate an SSH keypair
+   (`ssh-keygen -t ed25519`), add the **public** key as a deploy key with write access
+   on `mybgg-wiki` (`gh repo deploy-key add <pubkey-file> --repo <owner>/mybgg-wiki
+   --allow-write`), and store the **private** key as `WIKI_DEPLOY_KEY` in this repo's
+   Actions secrets.
 2. Add `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `GAMECACHE_BGG_TOKEN` as Actions secrets
    (same values as the Worker's, for the two LLM calls plus BGG auth made directly from
    Python).
