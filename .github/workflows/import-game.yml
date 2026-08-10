@@ -4,15 +4,49 @@ on:
   workflow_dispatch:
     inputs:
       bgg_id:
-        description: 'unused in this temporary token-check version'
+        description: 'BGG Game ID (number in the BGG URL, e.g. 237182 for Root)'
+        required: true
+        type: string
+      pdf_url:
+        description: 'Direct URL to the rulebook PDF for your physical edition (if omitted, --edition is required and content is generated from LLM knowledge)'
         required: false
         type: string
-        default: '0'
+        default: ''
+      edition:
+        description: 'Edition label (required when pdf_url is omitted; defaults to BGG publication year otherwise)'
+        required: false
+        type: string
+        default: ''
+      name:
+        description: 'Override the BGG name/slug — for BGG entries that bundle multiple maps/variants under one id (e.g. Ticket to Ride Map Collections)'
+        required: false
+        type: string
+        default: ''
+      base_game_bgg_id:
+        description: 'Override which base game this is an expansion of (BGG numeric id) — for when the wiki dependency differs from BGG''s own link'
+        required: false
+        type: string
+        default: ''
+      status:
+        description: 'Ownership status'
+        required: true
+        type: choice
+        default: 'owned'
+        options:
+          - owned
+          - wishlist
+          - borrowed
+          - friend
+          - played
+          - archived
 
 jobs:
   import:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout mybgg (code)
+        uses: actions/checkout@v7
+
       - name: Checkout mybgg-wiki (content)
         uses: actions/checkout@v7
         with:
@@ -20,13 +54,43 @@ jobs:
           path: wiki
           ssh-key: ${{ secrets.WIKI_DEPLOY_KEY }}
 
-      - name: Confirm push access works
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Configure git identity for wiki commits
         run: |
-          cd wiki
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          echo "deploy-key-check $(date -u +%s)" >> .deploy-key-check
-          git add .deploy-key-check
-          git commit -m "test: deploy key push check (throwaway)"
-          git push
-          echo "Push succeeded — WIKI_DEPLOY_KEY has write access."
+          git -C wiki config user.name "GitHub Actions"
+          git -C wiki config user.email "actions@github.com"
+
+      - name: Import game
+        env:
+          GAMECACHE_BGG_TOKEN: ${{ secrets.GAMECACHE_BGG_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BGG_ID: ${{ inputs.bgg_id }}
+          PDF_URL: ${{ inputs.pdf_url }}
+          EDITION: ${{ inputs.edition }}
+          NAME: ${{ inputs.name }}
+          BASE_GAME_BGG_ID: ${{ inputs.base_game_bgg_id }}
+          STATUS: ${{ inputs.status }}
+        run: |
+          ARGS=(--bgg_id "$BGG_ID" --status "$STATUS" --wiki_path wiki)
+          if [ -n "$PDF_URL" ]; then
+            ARGS+=(--pdf_url "$PDF_URL")
+          fi
+          if [ -n "$EDITION" ]; then
+            ARGS+=(--edition "$EDITION")
+          fi
+          if [ -n "$NAME" ]; then
+            ARGS+=(--name "$NAME")
+          fi
+          if [ -n "$BASE_GAME_BGG_ID" ]; then
+            ARGS+=(--base_game_bgg_id "$BASE_GAME_BGG_ID")
+          fi
+          python scripts/compiler/add_game.py "${ARGS[@]}"
