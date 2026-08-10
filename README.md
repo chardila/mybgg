@@ -134,7 +134,7 @@ If you cloned this repository, you likely already have a `origin` remote. If you
 
 ### 2. Configure GitHub Secrets
 
-For the automatic database updates and release management to work, you need to save two tokens in GitHub.
+For the automatic database updates to work, you need to save one token in GitHub.
 
 1.  Go to your GitHub repository.
 2.  Navigate to **Settings** > **Secrets and variables** > **Actions**.
@@ -142,14 +142,16 @@ For the automatic database updates and release management to work, you need to s
 4.  **Add BGG Token**:
     *   **Name**: `GAMECACHE_BGG_TOKEN`
     *   **Secret**: Paste the token value you generated earlier (from your local `.env` file).
-5.  **Add GitHub Token** (Required for uploads/releases):
-    *   **Name**: `GAMECACHE_GITHUB_TOKEN`
-    *   **Secret**: You need a Personal Access Token (Classic) with `repo` scope.
-    *   [Generate a new token here](https://github.com/settings/tokens/new) (select `repo` scope).
-    *   Paste the token starting with `ghp_...`.
 
-    > **Why is this token required here but not locally?**
-    > Locally, the script can run in "interactive mode" and open your browser to authenticate you. In GitHub Actions (the cloud), there is no human to log in, so this token provides the permission to upload files automatically.
+Uploading `gamecache.sqlite.gz` as a release asset does **not** need a separate token: the
+workflow already requests `permissions: contents: write`, so it uses the automatic
+`GITHUB_TOKEN` that GitHub Actions provides on every run. Nothing to create, nothing that
+expires.
+
+> Advanced: if you ever need the upload step to run with different permissions, you can
+> still override it by adding a `GAMECACHE_GITHUB_TOKEN` secret (a classic PAT with `repo`
+> scope) — it takes priority over the automatic token when present. Just remember a manual
+> PAT can expire and will need periodic rotation.
 
 
 ### 3. Enable GitHub Pages

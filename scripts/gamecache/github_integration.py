@@ -447,12 +447,14 @@ def setup_github_integration(settings: Dict[str, Any]) -> GitHubReleaseManager:
     """Set up GitHub integration with OAuth Device Flow authentication."""
     github_config = settings['github']
 
-    # Check if GAMECACHE_GITHUB_TOKEN or MYBGG_GITHUB_TOKEN environment variable is set (for CI/CD)
-    github_token = os.environ.get('GAMECACHE_GITHUB_TOKEN') or os.environ.get('MYBGG_GITHUB_TOKEN')
-    if github_token:
-        source = 'GAMECACHE_GITHUB_TOKEN' if os.environ.get('GAMECACHE_GITHUB_TOKEN') else 'MYBGG_GITHUB_TOKEN'
-        logger.info(f"Using {source} environment variable for authentication")
-        return GitHubReleaseManager(github_config['repo'], github_token)
+    # Check for an explicit override (GAMECACHE_GITHUB_TOKEN / deprecated MYBGG_GITHUB_TOKEN),
+    # then fall back to the automatic GITHUB_TOKEN that GitHub Actions provides on every run
+    # (no manual PAT to create or rotate).
+    for env_var in ('GAMECACHE_GITHUB_TOKEN', 'MYBGG_GITHUB_TOKEN', 'GITHUB_TOKEN'):
+        github_token = os.environ.get(env_var)
+        if github_token:
+            logger.info(f"Using {env_var} environment variable for authentication")
+            return GitHubReleaseManager(github_config['repo'], github_token)
 
     # Use OAuth Device Flow for automatic authentication
     # Public client ID for the GameCache OAuth App
