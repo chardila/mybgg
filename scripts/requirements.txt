@@ -25,7 +25,7 @@ charset-normalizer==3.4.7
     # via
     #   pdfminer-six
     #   requests
-cryptography==48.0.1
+cryptography==50.0.0
     # via
     #   -r requirements.in
     #   pdfminer-six
@@ -56,7 +56,7 @@ pdfminer-six==20260107
     # via pdfplumber
 pdfplumber==0.11.10
     # via -r requirements.in
-pillow==12.2.0
+pillow==12.3.0
     # via
     #   -r requirements.in
     #   pdfplumber
@@ -72,7 +72,7 @@ pygments==2.20.0
     # via pytest
 pynacl==1.6.2
     # via -r requirements.in
-pypdf==6.14.2
+pypdf==6.16.2
     # via -r requirements.in
 pypdfium2==5.11.0
     # via pdfplumber
