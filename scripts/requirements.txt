@@ -76,7 +76,7 @@ pypdf==6.16.2
     # via -r requirements.in
 pypdfium2==5.11.0
     # via pdfplumber
-pytest==9.1.1
+pytest==9.2.0
     # via -r requirements.in
 requests==2.33.0
     # via -r requirements.in
