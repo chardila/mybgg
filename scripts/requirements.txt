@@ -6,13 +6,13 @@
 #
 annotated-types==0.7.0
     # via pydantic
-anyio==4.14.1
+anyio==4.14.2
     # via
     #   httpx
     #   openai
 beautifulsoup4==4.15.0
     # via -r requirements.in
-certifi==2026.6.17
+certifi==2026.10.18
     # via
     #   httpcore
     #   httpx
@@ -25,7 +25,7 @@ charset-normalizer==3.4.7
     # via
     #   pdfminer-six
     #   requests
-cryptography==50.0.0
+cryptography==50.0.2
     # via
     #   -r requirements.in
     #   pdfminer-six
@@ -56,7 +56,7 @@ pdfminer-six==20260107
     # via pdfplumber
 pdfplumber==0.11.10
     # via -r requirements.in
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   -r requirements.in
     #   pdfplumber
@@ -72,17 +72,17 @@ pygments==2.20.0
     # via pytest
 pynacl==1.6.2
     # via -r requirements.in
-pypdf==6.16.2
+pypdf==6.21.4
     # via -r requirements.in
 pypdfium2==5.11.0
     # via pdfplumber
-pytest==9.1.1
+pytest==9.2.0
     # via -r requirements.in
-requests==2.33.0
+requests==2.34.2
     # via -r requirements.in
 sniffio==1.3.1
     # via openai
-soupsieve==2.8.4
+soupsieve==2.9.0
     # via beautifulsoup4
 tqdm==4.68.3
     # via openai
@@ -98,5 +98,5 @@ typing-extensions==4.15.0
     #   typing-inspection
 typing-inspection==0.4.2
     # via pydantic
-urllib3==2.7.0
+urllib3==2.8.0
     # via requests
