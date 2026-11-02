@@ -72,7 +72,7 @@ pygments==2.20.0
     # via pytest
 pynacl==1.6.2
     # via -r requirements.in
-pypdf==6.16.2
+pypdf==6.21.4
     # via -r requirements.in
 pypdfium2==5.11.0
     # via pdfplumber
