@@ -76,6 +76,7 @@ export async function transcribeBlob(blob, opts = {}) {
 const NOTE_SHORT = 'No te escuché, intenta de nuevo.';
 const NOTE_FAIL = 'No se pudo transcribir, intenta de nuevo o escribe tu pregunta.';
 const NOTE_PERMISSION = 'Permite el micrófono para el sitio en los ajustes de Safari.';
+const NOTE_BUSY = 'Espera, estoy transcribiendo…';
 
 // Hold-to-talk: pointerdown starts recording, pointerup (or 30 s) stops and transcribes.
 // States on button.dataset.state: 'idle' | 'recording' | 'transcribing'.
@@ -85,11 +86,14 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
   const transcribe = deps.transcribe || transcribeBlob;
   const setTimer = deps.setTimeoutFn || ((cb, ms) => setTimeout(cb, ms));
   const clearTimer = deps.clearTimeoutFn || ((id) => clearTimeout(id));
+  const doc = deps.documentTarget || (typeof document !== 'undefined' ? document : null);
+  const win = deps.windowTarget || (typeof window !== 'undefined' ? window : null);
 
   let state = 'idle';
   let stream = null;
   let recorder = null;
   let wantStop = false;
+  let cancelled = false;
   let timer = null;
 
   const setState = (s) => { state = s; button.dataset.state = s; };
@@ -113,6 +117,23 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
       recorder.stop();
     } catch {
       fail();
+    }
+  }
+
+  // Abandon the current recording without transcribing it (system gesture, page hidden, mic hidden/disabled).
+  // Does nothing unless we are recording; a transcription already running is left to finish.
+  function cancel() {
+    if (state !== 'recording') return;
+    cancelled = true;
+    wantStop = true; // covers the case where the permission prompt is still pending
+    clearTimer(timer);
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop(); // onstop sees `cancelled` and discards the audio
+      } catch {
+        recorder = null;
+        setState('idle');
+      }
     }
   }
 
@@ -152,7 +173,14 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
       rec.onerror = () => { if (recorder === rec) fail(); };
       // Use the local `rec`; ignore it if a failure already dropped this recorder.
-      rec.onstop = () => { if (recorder === rec) finish(new Blob(chunks, { type: rec.mimeType || mime || 'audio/mp4' })); };
+      rec.onstop = () => {
+        if (recorder !== rec) return;
+        if (cancelled) {
+          recorder = null;
+          return setState('idle');
+        }
+        finish(new Blob(chunks, { type: rec.mimeType || mime || 'audio/mp4' }));
+      };
       rec.start();
     } catch {
       return fail();
@@ -162,19 +190,25 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
 
   button.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    if (state === 'transcribing') onNote(NOTE_BUSY);
     if (state !== 'idle') return;
     if (button.setPointerCapture) button.setPointerCapture(e.pointerId);
     wantStop = false;
+    cancelled = false;
     setState('recording');
     start().catch(fail);
   });
-  const release = (e) => {
+  button.addEventListener('pointerup', (e) => {
     e.preventDefault();
     wantStop = true;
     if (state === 'recording') stop();
-  };
-  button.addEventListener('pointerup', release);
-  button.addEventListener('pointercancel', release);
+  });
+  button.addEventListener('pointercancel', (e) => {
+    e.preventDefault();
+    cancel();
+  });
+  if (doc) doc.addEventListener('visibilitychange', () => { if (doc.hidden) cancel(); });
+  if (win) win.addEventListener('pagehide', cancel);
 
-  return { isBusy: () => state !== 'idle' };
+  return { isBusy: () => state !== 'idle', cancel };
 }

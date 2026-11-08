@@ -39,12 +39,21 @@ function makeRecorderClass(blobBytes = 5000) {
   return FakeRecorder;
 }
 
+const NOTE_BUSY = 'Espera, estoy transcribiendo…';
+
 const liveStream = () => ({ getAudioTracks: () => [{ readyState: 'live' }] });
+
+function makeTarget() {
+  const h = {};
+  return { hidden: false, addEventListener: (t, fn) => { h[t] = fn; }, fire: (t) => h[t]() };
+}
 
 function setup({ blobBytes, transcribe, getUserMedia, recorderClass, getPrompt = () => 'Juego de mesa: Azul.' } = {}) {
   const button = makeButton();
   const MediaRecorderClass = recorderClass || makeRecorderClass(blobBytes);
   const timers = [];
+  const documentTarget = makeTarget();
+  const windowTarget = makeTarget();
   const handlers = { onText: vi.fn(), onNote: vi.fn(), onUnavailable: vi.fn() };
   const deps = {
     getUserMedia: getUserMedia || vi.fn(async () => liveStream()),
@@ -52,9 +61,11 @@ function setup({ blobBytes, transcribe, getUserMedia, recorderClass, getPrompt =
     transcribe: transcribe || vi.fn(async () => 'hola'),
     setTimeoutFn: vi.fn((cb, ms) => { timers.push({ cb, ms }); return timers.length; }),
     clearTimeoutFn: vi.fn(),
+    documentTarget,
+    windowTarget,
   };
   const ctl = createHoldToTalk({ button, getPrompt, ...handlers, deps });
-  return { button, ctl, deps, timers, MediaRecorderClass, ...handlers };
+  return { button, ctl, deps, timers, MediaRecorderClass, documentTarget, windowTarget, ...handlers };
 }
 
 describe('createHoldToTalk', () => {
@@ -236,6 +247,102 @@ describe('createHoldToTalk', () => {
     button.fire('pointerdown');
     await flush();
     expect(getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it('pointercancel (e.g. a system gesture) discards the recording instead of transcribing it', async () => {
+    const { button, deps, onText, onNote, MediaRecorderClass } = setup();
+    button.fire('pointerdown');
+    await flush();
+    button.fire('pointercancel');
+    await flush();
+    expect(MediaRecorderClass.instances[0].stop).toHaveBeenCalledTimes(1);
+    expect(deps.transcribe).not.toHaveBeenCalled();
+    expect(onText).not.toHaveBeenCalled();
+    expect(onNote).not.toHaveBeenCalled();
+    expect(button.dataset.state).toBe('idle');
+  });
+
+  it('cancel() while recording discards the audio, and the next press works normally', async () => {
+    const { button, ctl, deps, onText } = setup();
+    button.fire('pointerdown');
+    await flush();
+    ctl.cancel();
+    await flush();
+    expect(deps.transcribe).not.toHaveBeenCalled();
+    expect(button.dataset.state).toBe('idle');
+    button.fire('pointerdown');
+    await flush();
+    button.fire('pointerup');
+    await flush();
+    expect(onText).toHaveBeenCalledWith('hola');
+  });
+
+  it('cancel() while the permission prompt is pending never starts a recorder', async () => {
+    let resolveStream;
+    const getUserMedia = vi.fn(() => new Promise((r) => { resolveStream = r; }));
+    const { button, ctl, MediaRecorderClass } = setup({ getUserMedia });
+    button.fire('pointerdown');
+    ctl.cancel();
+    resolveStream(liveStream());
+    await flush();
+    expect(MediaRecorderClass.instances).toHaveLength(0);
+    expect(button.dataset.state).toBe('idle');
+  });
+
+  it('cancel() while transcribing does not interrupt the transcription', async () => {
+    let finish;
+    const transcribe = vi.fn(() => new Promise((r) => { finish = r; }));
+    const { button, ctl, onText } = setup({ transcribe });
+    button.fire('pointerdown');
+    await flush();
+    button.fire('pointerup');
+    await flush();
+    expect(button.dataset.state).toBe('transcribing');
+    ctl.cancel();
+    finish('listo');
+    await flush();
+    expect(onText).toHaveBeenCalledWith('listo');
+  });
+
+  it('backgrounding the page (visibilitychange hidden or pagehide) while recording discards the audio', async () => {
+    for (const trigger of ['visibility', 'pagehide']) {
+      const { button, deps, documentTarget, windowTarget, onNote } = setup();
+      button.fire('pointerdown');
+      await flush();
+      if (trigger === 'visibility') { documentTarget.hidden = true; documentTarget.fire('visibilitychange'); }
+      else windowTarget.fire('pagehide');
+      await flush();
+      expect(deps.transcribe).not.toHaveBeenCalled();
+      expect(onNote).not.toHaveBeenCalled();
+      expect(button.dataset.state).toBe('idle');
+    }
+  });
+
+  it('becoming visible again does not cancel a recording', async () => {
+    const { button, deps, documentTarget } = setup();
+    button.fire('pointerdown');
+    await flush();
+    documentTarget.hidden = false;
+    documentTarget.fire('visibilitychange');
+    button.fire('pointerup');
+    await flush();
+    expect(deps.transcribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('pressing while a transcription is running tells the user to wait', async () => {
+    let finish;
+    const transcribe = vi.fn(() => new Promise((r) => { finish = r; }));
+    const { button, onNote } = setup({ transcribe });
+    button.fire('pointerdown');
+    await flush();
+    button.fire('pointerdown'); // while recording: silent, it is the same hold
+    expect(onNote).not.toHaveBeenCalled();
+    button.fire('pointerup');
+    await flush();
+    button.fire('pointerdown'); // while transcribing
+    expect(onNote).toHaveBeenCalledWith(NOTE_BUSY);
+    finish('ok');
+    await flush();
   });
 
   it('reuses one microphone stream across presses', async () => {
