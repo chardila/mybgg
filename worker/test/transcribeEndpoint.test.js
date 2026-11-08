@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handleTranscribe, MAX_AUDIO_BYTES } from '../src/transcribe.js';
+import { handleTranscribe, bytesToBase64, MAX_AUDIO_BYTES } from '../src/transcribe.js';
+
+describe('bytesToBase64', () => {
+  it('matches btoa for small input and handles inputs larger than one chunk', () => {
+    expect(bytesToBase64(new Uint8Array([72, 105]))).toBe(btoa('Hi'));
+    const big = new Uint8Array(100000).map((_, i) => i % 251);
+    const expected = btoa(Array.from(big, (b) => String.fromCharCode(b)).join(''));
+    expect(bytesToBase64(big)).toBe(expected);
+  });
+});
 
 const cors = () => ({ 'Access-Control-Allow-Origin': 'https://bgg.cardila.com' });
 
