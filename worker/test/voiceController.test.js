@@ -39,13 +39,15 @@ function makeRecorderClass(blobBytes = 5000) {
   return FakeRecorder;
 }
 
-function setup({ blobBytes, transcribe, getUserMedia, getPrompt = () => 'Juego de mesa: Azul.' } = {}) {
+const liveStream = () => ({ getAudioTracks: () => [{ readyState: 'live' }] });
+
+function setup({ blobBytes, transcribe, getUserMedia, recorderClass, getPrompt = () => 'Juego de mesa: Azul.' } = {}) {
   const button = makeButton();
-  const MediaRecorderClass = makeRecorderClass(blobBytes);
+  const MediaRecorderClass = recorderClass || makeRecorderClass(blobBytes);
   const timers = [];
   const handlers = { onText: vi.fn(), onNote: vi.fn(), onUnavailable: vi.fn() };
   const deps = {
-    getUserMedia: getUserMedia || vi.fn(async () => ({ id: 'stream' })),
+    getUserMedia: getUserMedia || vi.fn(async () => liveStream()),
     MediaRecorderClass,
     transcribe: transcribe || vi.fn(async () => 'hola'),
     setTimeoutFn: vi.fn((cb, ms) => { timers.push({ cb, ms }); return timers.length; }),
@@ -67,7 +69,7 @@ describe('createHoldToTalk', () => {
     const { button, deps, MediaRecorderClass } = setup({ getUserMedia });
     button.fire('pointerdown');
     button.fire('pointerup');
-    resolveStream({ id: 'stream' });
+    resolveStream(liveStream());
     await flush();
     expect(MediaRecorderClass.instances).toHaveLength(0);
     expect(deps.transcribe).not.toHaveBeenCalled();
@@ -168,6 +170,72 @@ describe('createHoldToTalk', () => {
     finish('listo');
     await flush();
     expect(button.dataset.state).toBe('idle');
+  });
+
+  it('a MediaRecorder constructor that throws shows the generic note and does not strand the button', async () => {
+    class Throwing { static isTypeSupported() { return false; } constructor() { throw new Error('boom'); } }
+    const { button, onNote } = setup({ recorderClass: Throwing });
+    button.fire('pointerdown');
+    await flush();
+    expect(onNote).toHaveBeenCalledWith(NOTE_FAIL);
+    expect(button.dataset.state).toBe('idle');
+    button.fire('pointerup');
+    button.fire('pointerdown'); // not ignored: the button is usable again
+    await flush();
+    expect(onNote).toHaveBeenCalledTimes(2);
+  });
+
+  it('recorder.start() throwing shows the generic note and returns to idle', async () => {
+    class StartThrows {
+      static isTypeSupported() { return false; }
+      start() { throw new Error('boom'); }
+    }
+    const { button, onNote, deps } = setup({ recorderClass: StartThrows });
+    button.fire('pointerdown');
+    await flush();
+    expect(onNote).toHaveBeenCalledWith(NOTE_FAIL);
+    expect(button.dataset.state).toBe('idle');
+    expect(deps.transcribe).not.toHaveBeenCalled();
+  });
+
+  it('a recorder error event resets to idle, clears the timer, and ignores a late onstop', async () => {
+    const { button, onNote, deps, MediaRecorderClass } = setup();
+    button.fire('pointerdown');
+    await flush();
+    const rec = MediaRecorderClass.instances[0];
+    rec.onerror({ error: { message: 'x' } });
+    expect(onNote).toHaveBeenCalledWith(NOTE_FAIL);
+    expect(button.dataset.state).toBe('idle');
+    expect(deps.clearTimeoutFn).toHaveBeenCalled();
+    rec.ondataavailable({ data: new Blob([new Uint8Array(5000)]) });
+    rec.onstop();
+    await flush();
+    expect(deps.transcribe).not.toHaveBeenCalled();
+  });
+
+  it('recorder.stop() throwing on release shows the generic note and returns to idle', async () => {
+    const { button, onNote, MediaRecorderClass } = setup();
+    button.fire('pointerdown');
+    await flush();
+    MediaRecorderClass.instances[0].stop = vi.fn(() => { throw new Error('boom'); });
+    button.fire('pointerup');
+    await flush();
+    expect(onNote).toHaveBeenCalledWith(NOTE_FAIL);
+    expect(button.dataset.state).toBe('idle');
+  });
+
+  it('re-acquires the microphone when the cached stream tracks have ended', async () => {
+    const track = { readyState: 'live' };
+    const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [track] }));
+    const { button } = setup({ getUserMedia });
+    button.fire('pointerdown');
+    await flush();
+    button.fire('pointerup');
+    await flush();
+    track.readyState = 'ended'; // e.g. phone call or Siri took the mic
+    button.fire('pointerdown');
+    await flush();
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
   });
 
   it('reuses one microphone stream across presses', async () => {

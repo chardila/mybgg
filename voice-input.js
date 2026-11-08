@@ -95,9 +95,25 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
   const setState = (s) => { state = s; button.dataset.state = s; };
   setState('idle');
 
+  // Any recorder failure: drop the recorder (so a late onstop is ignored), tell the user, free the button.
+  function fail() {
+    clearTimer(timer);
+    recorder = null;
+    onNote(NOTE_FAIL);
+    setState('idle');
+  }
+
+  // A cached stream is only reusable while its audio tracks are live (iOS ends them on calls, Siri, backgrounding).
+  const isLive = (s) => !!s && typeof s.getAudioTracks === 'function' && s.getAudioTracks().some((t) => t.readyState === 'live');
+
   function stop() {
     clearTimer(timer);
-    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    if (!recorder || recorder.state === 'inactive') return;
+    try {
+      recorder.stop();
+    } catch {
+      fail();
+    }
   }
 
   async function finish(blob) {
@@ -120,7 +136,7 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
 
   async function start() {
     try {
-      if (!stream) stream = await getUserMedia({ audio: true });
+      if (!isLive(stream)) stream = await getUserMedia({ audio: true });
     } catch (e) {
       onNote(e && e.name === 'NotAllowedError' ? NOTE_PERMISSION : NOTE_FAIL);
       return setState('idle');
@@ -129,12 +145,18 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
 
     const mime = pickMime(MediaRecorderClass);
     const chunks = [];
-    const rec = new MediaRecorderClass(stream, mime ? { mimeType: mime } : undefined);
-    recorder = rec;
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    // Use the local `rec`: the shared `recorder` may already point elsewhere when this fires.
-    rec.onstop = () => finish(new Blob(chunks, { type: rec.mimeType || mime || 'audio/mp4' }));
-    rec.start();
+    let rec;
+    try {
+      rec = new MediaRecorderClass(stream, mime ? { mimeType: mime } : undefined);
+      recorder = rec;
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onerror = () => { if (recorder === rec) fail(); };
+      // Use the local `rec`; ignore it if a failure already dropped this recorder.
+      rec.onstop = () => { if (recorder === rec) finish(new Blob(chunks, { type: rec.mimeType || mime || 'audio/mp4' })); };
+      rec.start();
+    } catch {
+      return fail();
+    }
     timer = setTimer(stop, MAX_SECONDS * 1000);
   }
 
@@ -144,7 +166,7 @@ export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavaila
     if (button.setPointerCapture) button.setPointerCapture(e.pointerId);
     wantStop = false;
     setState('recording');
-    start();
+    start().catch(fail);
   });
   const release = (e) => {
     e.preventDefault();
