@@ -6,14 +6,8 @@ const MODEL = '@cf/openai/whisper-large-v3-turbo';
 const MAX_AUDIO_BYTES = 2 * 1024 * 1024; // ~60s of compressed audio / ~60s of 16 kHz mono WAV
 const MAX_PROMPT_CHARS = 400;
 
-export function bytesToBase64(bytes) {
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
+import { bytesToBase64 } from './transcribe.js';
+export { bytesToBase64 };
 
 function json(request, getCorsHeaders, body, status = 200) {
   return new Response(JSON.stringify(body), {
