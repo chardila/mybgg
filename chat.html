@@ -179,6 +179,33 @@
       cursor: pointer;
     }
     #send-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+    #mic-btn {
+      padding: 8px 14px;
+      background: #fff;
+      color: #4a4a8a;
+      border: 1px solid #4a4a8a;
+      border-radius: 8px;
+      font-size: 18px;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      touch-action: none;
+    }
+    #mic-btn[hidden] { display: none; }
+    #mic-btn:disabled { color: #aaa; border-color: #ccc; cursor: not-allowed; }
+    #mic-btn[data-state="recording"] { background: #c0392b; border-color: #c0392b; color: #fff; }
+    #mic-btn[data-state="transcribing"] { background: #eee; color: #777; }
+    .voice-note {
+      padding: 6px 16px;
+      background: #fff8e1;
+      border-top: 1px solid #ecd9a0;
+      color: #6b5a1a;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .voice-note[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -209,12 +236,15 @@
   </button>
 </div>
 
+<div class="voice-note" id="voice-note" hidden></div>
+
 <div class="input-bar">
   <textarea
     id="message-input"
     placeholder="Escribe una pregunta..."
     rows="1"
   ></textarea>
+  <button id="mic-btn" type="button" aria-label="Mantén presionado para hablar" title="Mantén presionado para hablar" hidden>🎤</button>
   <button id="send-btn">Enviar</button>
 </div>
 
@@ -253,6 +283,7 @@
     currentLanguage = lang;
     document.getElementById('btn-es').classList.toggle('active', lang === 'es');
     document.getElementById('btn-en').classList.toggle('active', lang === 'en');
+    if (window.syncMic) window.syncMic();
   }
 
   // ── Markdown renderer ──────────────────────────────────────────────────────
@@ -352,6 +383,7 @@
     streaming = true;
     document.getElementById('send-btn').disabled = true;
     document.getElementById('message-input').disabled = true;
+    if (window.syncMic) window.syncMic();
 
     addMessage('user', userText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
 
@@ -448,6 +480,7 @@
     document.getElementById('send-btn').disabled = false;
     const input = document.getElementById('message-input');
     input.disabled = false;
+    if (window.syncMic) window.syncMic();
     input.focus();
   }
 
@@ -459,6 +492,7 @@
     input.placeholder = awaiting
       ? 'Marca las expansiones que quieras y haz clic en "Empezar"...'
       : 'Escribe una pregunta...';
+    if (window.syncMic) window.syncMic();
   }
 
   function startDeepDive(baseSlug, baseLabel, expansionSlugs, expansionLabels) {
@@ -634,6 +668,48 @@
     triggerOpeningMessage();
     if (q) sendMessage(q);
   })();
+</script>
+
+<script type="module">
+  import { createHoldToTalk, buildVocabularyPrompt } from './voice-input.js';
+
+  const mic = document.getElementById('mic-btn');
+  const input = document.getElementById('message-input');
+  const noteEl = document.getElementById('voice-note');
+  const supported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  let voiceUnavailable = false;
+  let noteTimer = null;
+
+  // Mic is Spanish-only for now, and unusable while a reply streams or the box is disabled.
+  window.syncMic = function () {
+    mic.hidden = !(supported && !voiceUnavailable && currentLanguage === 'es');
+    mic.disabled = streaming || input.disabled;
+  };
+
+  function showNote(text) {
+    noteEl.textContent = text;
+    noteEl.hidden = false;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => { noteEl.hidden = true; }, 4000);
+  }
+
+  if (supported) {
+    createHoldToTalk({
+      button: mic,
+      getPrompt: () => buildVocabularyPrompt(currentGameName),
+      onText: (text) => {
+        input.value = input.value.trim() ? input.value.trimEnd() + ' ' + text : text;
+        input.focus();
+      },
+      onNote: showNote,
+      onUnavailable: () => {
+        voiceUnavailable = true;
+        window.syncMic();
+        showNote('La voz no está disponible por hoy. Escribe tu pregunta.');
+      },
+    });
+  }
+  window.syncMic();
 </script>
 
 </body>
