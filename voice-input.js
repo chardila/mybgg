@@ -72,3 +72,87 @@ export async function transcribeBlob(blob, opts = {}) {
   if (!res.ok) throw new Error(data.error || 'transcription_failed');
   return String(data.text || '').trim();
 }
+
+const NOTE_SHORT = 'No te escuché, intenta de nuevo.';
+const NOTE_FAIL = 'No se pudo transcribir, intenta de nuevo o escribe tu pregunta.';
+const NOTE_PERMISSION = 'Permite el micrófono para el sitio en los ajustes de Safari.';
+
+// Hold-to-talk: pointerdown starts recording, pointerup (or 30 s) stops and transcribes.
+// States on button.dataset.state: 'idle' | 'recording' | 'transcribing'.
+export function createHoldToTalk({ button, getPrompt, onText, onNote, onUnavailable, deps = {} }) {
+  const getUserMedia = deps.getUserMedia || ((c) => navigator.mediaDevices.getUserMedia(c));
+  const MediaRecorderClass = deps.MediaRecorderClass || (typeof MediaRecorder !== 'undefined' ? MediaRecorder : undefined);
+  const transcribe = deps.transcribe || transcribeBlob;
+  const setTimer = deps.setTimeoutFn || ((cb, ms) => setTimeout(cb, ms));
+  const clearTimer = deps.clearTimeoutFn || ((id) => clearTimeout(id));
+
+  let state = 'idle';
+  let stream = null;
+  let recorder = null;
+  let wantStop = false;
+  let timer = null;
+
+  const setState = (s) => { state = s; button.dataset.state = s; };
+  setState('idle');
+
+  function stop() {
+    clearTimer(timer);
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+  }
+
+  async function finish(blob) {
+    if (blob.size < MIN_AUDIO_BYTES) {
+      onNote(NOTE_SHORT);
+      return setState('idle');
+    }
+    setState('transcribing');
+    try {
+      const text = await transcribe(blob, { prompt: getPrompt() });
+      if (text) onText(text);
+      else onNote(NOTE_SHORT);
+    } catch (e) {
+      if (e instanceof VoiceUnavailableError) onUnavailable();
+      else onNote(NOTE_FAIL);
+    } finally {
+      setState('idle');
+    }
+  }
+
+  async function start() {
+    try {
+      if (!stream) stream = await getUserMedia({ audio: true });
+    } catch (e) {
+      onNote(e && e.name === 'NotAllowedError' ? NOTE_PERMISSION : NOTE_FAIL);
+      return setState('idle');
+    }
+    if (wantStop) return setState('idle'); // released while the permission prompt was showing
+
+    const mime = pickMime(MediaRecorderClass);
+    const chunks = [];
+    const rec = new MediaRecorderClass(stream, mime ? { mimeType: mime } : undefined);
+    recorder = rec;
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    // Use the local `rec`: the shared `recorder` may already point elsewhere when this fires.
+    rec.onstop = () => finish(new Blob(chunks, { type: rec.mimeType || mime || 'audio/mp4' }));
+    rec.start();
+    timer = setTimer(stop, MAX_SECONDS * 1000);
+  }
+
+  button.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (state !== 'idle') return;
+    if (button.setPointerCapture) button.setPointerCapture(e.pointerId);
+    wantStop = false;
+    setState('recording');
+    start();
+  });
+  const release = (e) => {
+    e.preventDefault();
+    wantStop = true;
+    if (state === 'recording') stop();
+  };
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointercancel', release);
+
+  return { isBusy: () => state !== 'idle' };
+}
