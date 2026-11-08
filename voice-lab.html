@@ -242,15 +242,23 @@
     if (useWhisper) {
       const mime = pickMime();
       chunks = [];
-      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-      recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType || mime || 'audio/mp4' });
-        log(`Grabado: ${blob.type}, ${Math.round(blob.size / 1024)} KB, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-        if (blob.size < 1000) return setMeta('metaWhisper', 'Audio demasiado corto', true);
-        runWhisper(blob);
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recorder = rec;
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      rec.onerror = (e) => { log('MediaRecorder error: ' + (e.error && e.error.message)); setMeta('metaWhisper', 'Error de grabación', true); };
+      rec.onstop = () => {
+        try {
+          // use the local `rec`: the shared `recorder` is already null by the time this fires
+          const blob = new Blob(chunks, { type: rec.mimeType || mime || 'audio/mp4' });
+          log(`Grabado: ${blob.type}, ${Math.round(blob.size / 1024)} KB, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+          if (blob.size < 1000) return setMeta('metaWhisper', 'Audio demasiado corto', true);
+          runWhisper(blob);
+        } catch (e) {
+          log('Error procesando la grabación: ' + e.message);
+          setMeta('metaWhisper', 'Error: ' + e.message, true);
+        }
       };
-      recorder.start();
+      rec.start();
     }
     if (useSafari) {
       if (!SR) {
