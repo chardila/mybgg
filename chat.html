@@ -679,11 +679,15 @@
   const supported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   let voiceUnavailable = false;
   let noteTimer = null;
+  let voice = null;
 
   // Mic is Spanish-only for now, and unusable while a reply streams or the box is disabled.
+  // If it becomes unusable mid-hold (EN toggle, a send starting), abandon the recording: the
+  // hidden/disabled button would never receive its pointerup.
   window.syncMic = function () {
     mic.hidden = !(supported && !voiceUnavailable && currentLanguage === 'es');
     mic.disabled = streaming || input.disabled;
+    if (voice && (mic.hidden || mic.disabled)) voice.cancel();
   };
 
   function showNote(text) {
@@ -694,7 +698,7 @@
   }
 
   if (supported) {
-    createHoldToTalk({
+    voice = createHoldToTalk({
       button: mic,
       getPrompt: () => buildVocabularyPrompt(currentGameName),
       onText: (text) => {
