@@ -8,3 +8,6 @@ enabled = true
 [[kv_namespaces]]
 binding = "WIKI"
 id = "7c58b858910f4cc687381e3630e434d2"
+
+[ai]
+binding = "AI"
