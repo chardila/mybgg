@@ -15,6 +15,29 @@ export function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+// Read the body but give up as soon as it passes `max` bytes (null), so a chunked upload
+// without Content-Length can't make the Worker buffer an arbitrarily large body.
+async function readCapped(request, max) {
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.length; }
+  return out;
+}
+
 export async function handleTranscribe(request, env, getCorsHeaders) {
   const reply = (body, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -24,16 +47,24 @@ export async function handleTranscribe(request, env, getCorsHeaders) {
 
   if (!env.AI) return reply({ error: 'voice_unavailable' }, 503);
 
-  const declared = parseInt(request.headers.get('Content-Length') || '0', 10);
+  const lengthHeader = request.headers.get('Content-Length');
+  const declared = parseInt(lengthHeader || '0', 10);
   if (declared > MAX_AUDIO_BYTES) return reply({ error: 'audio_too_large' }, 413);
+  if (lengthHeader !== null && declared === 0) return reply({ error: 'empty_audio' }, 400);
 
+  // The Workers AI free quota is the real spending cap, so if KV (the limiter's store) is down
+  // we let the request through rather than killing voice for the rest of the day.
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-  const { allowed } = await checkRateLimit({ store: env.WIKI, ip, limit: VOICE_RATE_LIMIT, prefix: 'voice' });
-  if (!allowed) return reply({ error: 'rate_limited' }, 429);
+  try {
+    const { allowed } = await checkRateLimit({ store: env.WIKI, ip, limit: VOICE_RATE_LIMIT, prefix: 'voice' });
+    if (!allowed) return reply({ error: 'rate_limited' }, 429);
+  } catch {
+    // fail open
+  }
 
-  const audio = new Uint8Array(await request.arrayBuffer());
+  const audio = await readCapped(request, MAX_AUDIO_BYTES);
+  if (audio === null) return reply({ error: 'audio_too_large' }, 413);
   if (audio.length === 0) return reply({ error: 'empty_audio' }, 400);
-  if (audio.length > MAX_AUDIO_BYTES) return reply({ error: 'audio_too_large' }, 413);
 
   const prompt = (new URL(request.url).searchParams.get('prompt') || '').slice(0, MAX_PROMPT_CHARS);
   const input = { audio: bytesToBase64(audio), language: 'es', task: 'transcribe' };

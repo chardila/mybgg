@@ -96,6 +96,56 @@ describe('handleTranscribe', () => {
     expect(text).not.toContain('decode failed');
   });
 
+  it('rejects a declared Content-Length of 0 before touching KV', async () => {
+    const store = { get: vi.fn(async () => null), put: vi.fn(async () => {}) };
+    const request = new Request('https://x.test/api/transcribe', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': '2.2.2.2', 'Content-Length': '0' },
+      body: new Uint8Array(0),
+    });
+    const res = await handleTranscribe(request, env({ WIKI: store }), cors);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('empty_audio');
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it('stops reading a chunked body without Content-Length once it exceeds the cap', async () => {
+    let pulled = 0;
+    const chunk = new Uint8Array(300 * 1024);
+    const body = new ReadableStream({
+      pull(controller) {
+        if (pulled >= 10) return controller.close();
+        pulled++;
+        controller.enqueue(chunk);
+      },
+    });
+    const request = new Request('https://x.test/api/transcribe', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': '2.2.2.2' },
+      body,
+      duplex: 'half',
+    });
+    const e = env();
+    const res = await handleTranscribe(request, e, cors);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe('audio_too_large');
+    expect(pulled).toBeLessThan(10);
+    expect(e.AI.run).not.toHaveBeenCalled();
+  });
+
+  it('still transcribes when the KV rate-limit store is failing (fail open)', async () => {
+    const store = {
+      get: vi.fn(async () => { throw new Error('KV daily limit exceeded'); }),
+      put: vi.fn(async () => { throw new Error('KV daily limit exceeded'); }),
+    };
+    const e = env({ WIKI: store });
+    const res = await handleTranscribe(req(), e, cors);
+    expect(res.status).toBe(200);
+    expect((await res.json()).text).toBe('hola');
+    expect(e.AI.run).toHaveBeenCalledTimes(1);
+  });
+
   it('returns 503 voice_unavailable when the AI binding is missing', async () => {
     const res = await handleTranscribe(req(), { WIKI: mapStore() }, cors);
     expect(res.status).toBe(503);
