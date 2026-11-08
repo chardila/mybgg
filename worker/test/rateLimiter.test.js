@@ -75,3 +75,24 @@ describe('checkRateLimit', () => {
     expect(capturedOpts).toEqual({ expirationTtl: 120 });
   });
 });
+
+describe('checkRateLimit prefix', () => {
+  it('keeps a separate counter per prefix for the same ip', async () => {
+    const store = createFakeStore();
+    const now = Date.now();
+    for (let i = 0; i < 20; i++) {
+      await checkRateLimit({ store, ip: '1.2.3.4', now, limit: 20, windowSeconds: 60 });
+    }
+    const chat = await checkRateLimit({ store, ip: '1.2.3.4', now, limit: 20, windowSeconds: 60 });
+    expect(chat.allowed).toBe(false);
+    const voice = await checkRateLimit({ store, ip: '1.2.3.4', now, limit: 20, windowSeconds: 60, prefix: 'voice' });
+    expect(voice.allowed).toBe(true);
+  });
+
+  it('uses the prefix in the KV key and defaults to chat', async () => {
+    const store = createFakeStore();
+    await checkRateLimit({ store, ip: '9.9.9.9', now: 60000, prefix: 'voice' });
+    await checkRateLimit({ store, ip: '9.9.9.9', now: 60000 });
+    expect([...store._map.keys()].sort()).toEqual(['ratelimit:chat:9.9.9.9:1', 'ratelimit:voice:9.9.9.9:1']);
+  });
+});

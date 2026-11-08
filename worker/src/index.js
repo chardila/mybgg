@@ -1,7 +1,7 @@
 import { buildDeepDiveContext } from './deepDiveContext.js';
 import { checkRateLimit } from './rateLimiter.js';
 import { BGG_TOOL_DEFINITIONS, executeBggTool } from './bggTools.js';
-import { handleTranscribeLab } from './voiceLab.js';
+import { handleTranscribe } from './transcribe.js';
 
 const MAX_TOOL_CALLS_PER_ROUND = 4;
 const MAX_TOOL_ROUNDS = 3;
@@ -13,7 +13,7 @@ function getCorsHeaders(request) {
   return {
     'Access-Control-Allow-Origin': isAllowed ? origin : 'https://bgg.cardila.com',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Lab-Key',
+    'Access-Control-Allow-Headers': 'Content-Type',
   };
 }
 
@@ -684,8 +684,8 @@ export default {
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       return handleChat(request, env);
     }
-    if (url.pathname === '/api/lab/transcribe' && request.method === 'POST') {
-      return handleTranscribeLab(request, env, getCorsHeaders);
+    if (url.pathname === '/api/transcribe' && request.method === 'POST') {
+      return handleTranscribe(request, env, getCorsHeaders);
     }
     return new Response('not found', { status: 404, headers: cors });
   },

@@ -7,9 +7,10 @@ export async function checkRateLimit({
   now = Date.now(),
   limit = DEFAULT_LIMIT,
   windowSeconds = DEFAULT_WINDOW_SECONDS,
+  prefix = 'chat',
 }) {
   const windowStart = Math.floor(now / (windowSeconds * 1000));
-  const key = `ratelimit:chat:${ip}:${windowStart}`;
+  const key = `ratelimit:${prefix}:${ip}:${windowStart}`;
 
   const current = await store.get(key);
   const count = current ? parseInt(current, 10) : 0;
